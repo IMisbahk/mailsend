@@ -1,0 +1,57 @@
+.gitignore
+  s_018bd8afccdf7d::t_88933240a999de 1-18
+.goreleaser.yaml
+  s_018bd8afccdf7d::t_21af08e8be3f59 1-29
+Makefile
+  s_f3f4fa3494a7ad::t_1118059a0c5c50 1-11
+cmd/mailsend/main.go
+  s_018bd8afccdf7d::t_0f3fddeb5b70c4 1-8
+go.mod
+  s_018bd8afccdf7d::t_859bbd239d0c0b 1-28
+go.sum
+  s_f3f4fa3494a7ad::t_822fb799ea05fd 1-78
+internal/auth/auth.go
+  s_f3f4fa3494a7ad::t_7e18a2f5366991 1-518
+internal/auth/auth_test.go
+  s_f3f4fa3494a7ad::t_d932a2f8ae87e7 1-108
+internal/cli/rate_test.go
+  s_018bd8afccdf7d::t_8851c63a3557d2 1-63
+internal/cli/root.go
+  s_018bd8afccdf7d::t_77f3527ae35ace 1-1150
+internal/mail/message.go
+  s_f3f4fa3494a7ad::t_5a0f74d8719764 1-299
+internal/store/store.go
+  s_f3f4fa3494a7ad::t_950161675dfb5c 1-278
+internal/store/store_test.go
+  s_f3f4fa3494a7ad::t_05736ebc2d06f9 1-87
+internal/template/template.go
+  s_f3f4fa3494a7ad::t_c8c429d0e44b35 1-108
+internal/template/template_test.go
+  s_f3f4fa3494a7ad::t_8c5ff0fcc0006e 1-33
+scripts/build-release.sh
+  s_018bd8afccdf7d::t_ad14bfbe977d48 1-28
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "eef570cde86c93f94b8803fec4f71c8df35f8c2a",
+  "prompts": {},
+  "sessions": {
+    "s_018bd8afccdf7d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a105fe-ac93-7d20-b8ca-6ebaff8cd4a2",
+        "model": "gpt-6-luna"
+      },
+      "human_author": "Misbah Khursheed <m.misbahkhursheed@gmail.com>"
+    },
+    "s_f3f4fa3494a7ad": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1039a-0c98-7513-bfa8-fed089547c28",
+        "model": "gpt-6-luna"
+      },
+      "human_author": "Misbah Khursheed <m.misbahkhursheed@gmail.com>"
+    }
+  }
+}
