@@ -1,0 +1,29 @@
+version: 2
+project_name: mailsend
+
+builds:
+  - id: mailsend
+    main: ./cmd/mailsend
+    binary: mailsend
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X github.com/IMisbahk/mailsend/internal/cli.version={{ .Version }}
+
+archives:
+  - formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files:
+      - README.md
+
+checksum:
+  name_template: checksums.txt

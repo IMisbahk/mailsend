@@ -1,0 +1,18 @@
+# Local OAuth credentials and account data
+client_secret*.json
+token*.json
+oauth*.json
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
+
+# Build outputs
+/build/
+/dist/
+*.exe
+
+# Go tooling
+/vendor/
+
+# macOS metadata
+**/.DS_Store
