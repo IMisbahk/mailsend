@@ -133,8 +133,8 @@ func (m Message) Build() (BuiltMessage, error) {
 		}
 		payload.Write(body.Bytes())
 	} else {
+		// writeAlternative writes MIME Content-* headers; blank line must come after them.
 		writeHeaders(&payload)
-		fmt.Fprint(&payload, "\r\n")
 		if err := writeAlternative(&payload, m); err != nil {
 			return BuiltMessage{}, err
 		}
