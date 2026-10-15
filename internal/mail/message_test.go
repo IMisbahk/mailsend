@@ -5,6 +5,7 @@ import (
 	"io"
 	"mime"
 	"mime/multipart"
+	"mime/quotedprintable"
 	"net/mail"
 	"os"
 	"path/filepath"
@@ -161,4 +162,184 @@ func TestBuildRejectsBadInputs(t *testing.T) {
 			t.Fatalf("expected validation error for %#v", m)
 		}
 	}
+}
+
+func TestPlainTextBodyRoundTripNoHeadersInBody(t *testing.T) {
+	note := "Thanks for the intro.\n\nBest,\nAlex\nsunbeam.agency"
+	built, err := (Message{To: []string{"a@example.com"}, Subject: "Intro note", Text: note}).Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	msg, body := decodeBuiltMessage(t, built.Raw)
+	contentType := msg.Header.Get("Content-Type")
+	if !strings.HasPrefix(contentType, "text/plain") {
+		t.Fatalf("Content-Type should be a header, got %q", contentType)
+	}
+	if msg.Header.Get("Content-Transfer-Encoding") == "" {
+		t.Fatal("Content-Transfer-Encoding should be a header, not body text")
+	}
+	if strings.Contains(body, "Content-Type:") || strings.Contains(body, "Content-Transfer-Encoding:") {
+		t.Fatalf("MIME headers leaked into body: %q", body)
+	}
+	if normalizeNewlines(body) != normalizeNewlines(note) {
+		t.Fatalf("decoded body %q != input %q", body, note)
+	}
+	if !strings.HasSuffix(normalizeNewlines(body), "\nsunbeam.agency") && normalizeNewlines(body) != "sunbeam.agency" {
+		t.Fatalf("final line sunbeam.agency was altered: %q", body)
+	}
+	if strings.Contains(body, "http://") || strings.Contains(body, "https://") || strings.Contains(body, "utm_") {
+		t.Fatalf("unexpected tracking or redirect link inserted: %q", body)
+	}
+}
+
+func TestLongLineRoundTripWithoutVisibleSoftBreak(t *testing.T) {
+	longLine := strings.Repeat("abcdefghijklmnopqrstuvwxyz", 4) // 104 chars
+	built, err := (Message{To: []string{"a@example.com"}, Subject: "Long", Text: longLine}).Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, body := decodeBuiltMessage(t, built.Raw)
+	if normalizeNewlines(body) != longLine {
+		t.Fatalf("decoded body %q != input %q", body, longLine)
+	}
+	if strings.Contains(body, "=\r\n") || strings.Contains(body, "=\n") || strings.HasSuffix(strings.TrimSpace(body), "=") {
+		t.Fatalf("quoted-printable soft break visible after decode: %q", body)
+	}
+}
+
+func TestUtf8SubjectAndBodyRoundTrip(t *testing.T) {
+	subject := "Réunion café — 日本語"
+	text := "Café résumé: 日本語の本文です。\n\nsunbeam.agency"
+	built, err := (Message{To: []string{"a@example.com"}, Subject: subject, Text: text}).Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	msg, body := decodeBuiltMessage(t, built.Raw)
+	decodedSubject, err := (&mime.WordDecoder{}).DecodeHeader(msg.Header.Get("Subject"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decodedSubject != subject {
+		t.Fatalf("subject %q != %q", decodedSubject, subject)
+	}
+	if normalizeNewlines(body) != normalizeNewlines(text) {
+		t.Fatalf("decoded body %q != input %q", body, text)
+	}
+}
+
+func TestHtmlOnlyAndAlternativeAreRealMime(t *testing.T) {
+	t.Run("htmlOnly", func(t *testing.T) {
+		html := "<p>Hello from sunbeam.agency</p>"
+		built, err := (Message{To: []string{"a@example.com"}, Subject: "HTML", HTML: html}).Build()
+		if err != nil {
+			t.Fatal(err)
+		}
+		msg, body := decodeBuiltMessage(t, built.Raw)
+		if !strings.HasPrefix(msg.Header.Get("Content-Type"), "text/html") {
+			t.Fatalf("Content-Type header missing/wrong: %q", msg.Header.Get("Content-Type"))
+		}
+		if msg.Header.Get("Content-Transfer-Encoding") == "" {
+			t.Fatal("Content-Transfer-Encoding should be a header")
+		}
+		if strings.Contains(body, "Content-Type:") || strings.Contains(body, "Content-Transfer-Encoding:") {
+			t.Fatalf("MIME headers leaked into HTML body: %q", body)
+		}
+		if normalizeNewlines(body) != html {
+			t.Fatalf("decoded HTML body %q != input %q", body, html)
+		}
+	})
+	t.Run("textPlusHtml", func(t *testing.T) {
+		text := "plain note\n\nsunbeam.agency"
+		html := "<p>plain note</p><p>sunbeam.agency</p>"
+		built, err := (Message{To: []string{"a@example.com"}, Subject: "Both", Text: text, HTML: html}).Build()
+		if err != nil {
+			t.Fatal(err)
+		}
+		raw, err := base64.RawURLEncoding.DecodeString(built.Raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		msg, err := mail.ReadMessage(strings.NewReader(string(raw)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		media, params, err := mime.ParseMediaType(msg.Header.Get("Content-Type"))
+		if err != nil || media != "multipart/alternative" {
+			t.Fatalf("expected multipart/alternative header, got %q (%v)", msg.Header.Get("Content-Type"), err)
+		}
+		reader := multipart.NewReader(msg.Body, params["boundary"])
+		plainPart, err := reader.NextPart()
+		if err != nil {
+			t.Fatal(err)
+		}
+		plainBody := decodePartBody(t, plainPart)
+		if strings.Contains(plainBody, "Content-Type:") {
+			t.Fatalf("headers leaked into alternative plain part: %q", plainBody)
+		}
+		if normalizeNewlines(plainBody) != normalizeNewlines(text) {
+			t.Fatalf("plain part %q != %q", plainBody, text)
+		}
+		htmlPart, err := reader.NextPart()
+		if err != nil {
+			t.Fatal(err)
+		}
+		htmlBody := decodePartBody(t, htmlPart)
+		if normalizeNewlines(htmlBody) != html {
+			t.Fatalf("html part %q != %q", htmlBody, html)
+		}
+	})
+}
+
+func decodeBuiltMessage(t *testing.T, rawURL string) (*mail.Message, string) {
+	t.Helper()
+	raw, err := base64.RawURLEncoding.DecodeString(rawURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	msg, err := mail.ReadMessage(strings.NewReader(string(raw)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := io.ReadAll(msg.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := decodeTransferEncoding(t, msg.Header.Get("Content-Transfer-Encoding"), encoded)
+	return msg, body
+}
+
+func decodePartBody(t *testing.T, part *multipart.Part) string {
+	t.Helper()
+	encoded, err := io.ReadAll(part)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return decodeTransferEncoding(t, part.Header.Get("Content-Transfer-Encoding"), encoded)
+}
+
+func decodeTransferEncoding(t *testing.T, transferEncoding string, encoded []byte) string {
+	t.Helper()
+	switch strings.ToLower(strings.TrimSpace(transferEncoding)) {
+	case "", "7bit", "8bit", "binary":
+		return string(encoded)
+	case "quoted-printable":
+		decoded, err := io.ReadAll(quotedprintable.NewReader(strings.NewReader(string(encoded))))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(decoded)
+	case "base64":
+		decoded, err := io.ReadAll(base64.NewDecoder(base64.StdEncoding, strings.NewReader(string(encoded))))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(decoded)
+	default:
+		t.Fatalf("unsupported Content-Transfer-Encoding %q", transferEncoding)
+		return ""
+	}
+}
+
+func normalizeNewlines(s string) string {
+	return strings.ReplaceAll(strings.ReplaceAll(s, "\r\n", "\n"), "\r", "\n")
 }
