@@ -87,6 +87,28 @@ func TestRefreshFailureIsSafeAndActionable(t *testing.T) {
 		t.Fatalf("refresh failure classification ambiguous=%v err=%v", ambiguous, err)
 	}
 }
+type classifiedError struct {
+	retry bool
+	quota bool
+	authn bool
+}
+
+func (e classifiedError) Error() string   { return "classified" }
+func (e classifiedError) Retryable() bool { return e.retry }
+func (e classifiedError) IsQuota() bool   { return e.quota }
+func (e classifiedError) IsAuth() bool    { return e.authn }
+
+func TestInterfaceErrorsAreClassified(t *testing.T) {
+	temporary := classifiedError{retry: true, quota: true}
+	if !Retryable(temporary) || !IsQuotaError(temporary) || IsAuthError(temporary) {
+		t.Fatal("temporary quota error was misclassified")
+	}
+	permanent := classifiedError{authn: true}
+	if Retryable(permanent) || IsQuotaError(permanent) || !IsAuthError(permanent) {
+		t.Fatal("permanent auth error was misclassified")
+	}
+}
+
 func TestLostSendResponseIsUncertain(t *testing.T) {
 	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h, ok := w.(http.Hijacker)

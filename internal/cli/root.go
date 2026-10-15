@@ -7,7 +7,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -15,11 +14,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gofrs/flock"
 	"github.com/IMisbahk/mailsend/internal/auth"
 	mailmsg "github.com/IMisbahk/mailsend/internal/mail"
 	"github.com/IMisbahk/mailsend/internal/store"
 	templatetool "github.com/IMisbahk/mailsend/internal/template"
+	"github.com/gofrs/flock"
 	"github.com/spf13/cobra"
 )
 
@@ -37,24 +36,19 @@ func Execute() int {
 	if err == nil {
 		return 0
 	}
-	if global.json {
-		b, _ := json.Marshal(map[string]any{"error": map[string]any{"message": err.Error(), "type": "mailsend_error"}})
-		fmt.Fprintln(os.Stderr, string(b))
-	} else {
-		fmt.Fprintln(os.Stderr, "Error:", err)
-	}
+	printCommandError(err)
 	return 1
 }
 func newRoot() *cobra.Command {
 	global = options{}
-	root := &cobra.Command{Use: "mailsend", Short: "Send email from your terminal through the Gmail API", Long: "mailsend is a local Gmail API client. It uses Google OAuth 2.0, stores tokens in the operating system keychain, and keeps send history in a local SQLite database.", SilenceUsage: true, SilenceErrors: true}
+	root := &cobra.Command{Use: "mailsend", Short: "Send email from your terminal", Long: "mailsend is a local email client. Gmail accounts send through the Gmail API with OAuth. SMTP accounts send through the server configured for that account. Tokens and SMTP passwords stay in the operating system keychain, and send history stays in a local SQLite database.", SilenceUsage: true, SilenceErrors: true}
 	root.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
 		if global.account != "" {
 			return auth.ValidateAccountName(global.account)
 		}
 		return nil
 	}
-	root.PersistentFlags().StringVar(&global.account, "account", "", "Named Gmail account (default: the current default account)")
+	root.PersistentFlags().StringVar(&global.account, "account", "", "Named account (default: the current default account)")
 	root.PersistentFlags().BoolVar(&global.json, "json", false, "Write machine-readable JSON output")
 	root.AddCommand(loginCmd(), logoutCmd(), accountCmd(), sendCmd(), bulkCmd(), quotaCmd(), historyCmd(), templateCmd(), versionCmd())
 	return root
@@ -67,7 +61,7 @@ func versionCmd() *cobra.Command {
 }
 func output(value any, human func()) error {
 	if global.json {
-		e := json.NewEncoder(os.Stdout)
+		e := json.NewEncoder(commandStdout)
 		e.SetIndent("", "  ")
 		return e.Encode(value)
 	}
@@ -111,50 +105,12 @@ func loginCmd() *cobra.Command {
 	return cmd
 }
 func logoutCmd() *cobra.Command {
-	return &cobra.Command{Use: "logout", Short: "Remove a Gmail account token from the OS keychain", RunE: func(cmd *cobra.Command, args []string) error {
+	return &cobra.Command{Use: "logout", Short: "Remove an account token or SMTP password from the OS keychain", RunE: func(cmd *cobra.Command, args []string) error {
 		name := selectedAccount()
 		if e := auth.Logout(name); e != nil {
 			return e
 		}
 		return output(map[string]any{"status": "logged_out", "account": name}, func() { fmt.Printf("Logged out %s\n", name) })
-	}}
-}
-func accountCmd() *cobra.Command {
-	return &cobra.Command{Use: "account", Short: "Show the authenticated Gmail account", RunE: func(cmd *cobra.Command, args []string) error {
-		name := selectedAccount()
-		client, e := auth.Load(name)
-		if e != nil {
-			return e
-		}
-		ctx, cancel := context.WithTimeout(cmd.Context(), 30*time.Second)
-		defer cancel()
-		p, e := client.Profile(ctx)
-		if e != nil {
-			return e
-		}
-		v := map[string]any{"account": name, "email": p.EmailAddress, "authenticated": true, "aliases": []string{}, "aliases_note": "Alias listing requires Gmail settings scope; mailsend requests only gmail.send plus basic account identity. The From address remains the authenticated account."}
-		return output(v, func() {
-			fmt.Printf("Account: %s\nEmail: %s\nAuthentication: active\nAliases: not queried (minimum send scope)\n", name, p.EmailAddress)
-		})
-	}}
-}
-func quotaCmd() *cobra.Command {
-	return &cobra.Command{Use: "quota", Short: "Show available Gmail sending information", Long: "Gmail API does not expose a reliable remaining-send quota. This command reports mailbox information and explains the limits of available data.", RunE: func(cmd *cobra.Command, args []string) error {
-		name := selectedAccount()
-		client, e := auth.Load(name)
-		if e != nil {
-			return e
-		}
-		ctx, cancel := context.WithTimeout(cmd.Context(), 30*time.Second)
-		defer cancel()
-		p, e := client.Profile(ctx)
-		if e != nil {
-			return e
-		}
-		v := map[string]any{"account": name, "email": p.EmailAddress, "remaining_sends": nil, "quota_available": false, "message": "Gmail API does not provide a reliable remaining-send count. Google sending limits still apply; mailsend cannot bypass them."}
-		return output(v, func() {
-			fmt.Printf("Account: %s (%s)\nRemaining sends: unavailable from Gmail API\nGmail sending limits apply and cannot be bypassed.\n", name, p.EmailAddress)
-		})
 	}}
 }
 func historyCmd() *cobra.Command {
@@ -217,7 +173,7 @@ func sendCmd() *cobra.Command {
 	var to, cc, bcc, attachments []string
 	var subject, body, bodyFile, htmlFile, replyTo, fromName, schedule string
 	var dry, yes bool
-	cmd := &cobra.Command{Use: "send", Short: "Send one email through Gmail", Long: "Send email directly through the Gmail API. The From address is the authenticated Gmail account; arbitrary From addresses are not accepted.", RunE: func(cmd *cobra.Command, args []string) error {
+	cmd := &cobra.Command{Use: "send", Short: "Send one email", Long: "Send one email through the selected account. Gmail accounts use the authenticated address. SMTP accounts use the From address saved with the account. There is no per-message From override.", RunE: func(cmd *cobra.Command, args []string) error {
 		if body != "" && bodyFile != "" {
 			return fmt.Errorf("use only one of --body and --body-file")
 		}
@@ -256,13 +212,22 @@ func sendCmd() *cobra.Command {
 			return e
 		}
 		name := selectedAccount()
-		accountEmail := auth.Email(name)
-		msg := mailmsg.Message{To: allTo, Cc: allCC, Bcc: allBCC, Subject: subject, Text: text, HTML: html, Attachments: attachments, ReplyTo: replyTo, FromName: fromName, Account: accountEmail}
-		built, e := msg.Build()
-		if e != nil {
-			return e
-		}
+		msg := mailmsg.Message{To: allTo, Cc: allCC, Bcc: allBCC, Subject: subject, Text: text, HTML: html, Attachments: attachments, ReplyTo: replyTo, FromName: fromName}
 		if dry {
+			if cfg, err := auth.LookupProvider(name); err == nil && cfg.Provider == auth.ProviderSMTP && cfg.From != "" {
+				msg.Account = cfg.From
+				if msg.ReplyTo == "" {
+					msg.ReplyTo = cfg.ReplyTo
+				}
+				msg.IncludeMessageID = true
+				msg.OmitBccHeader = true
+			} else if email := auth.Email(name); email != "" {
+				msg.Account = email
+			}
+			built, e := msg.Build()
+			if e != nil {
+				return e
+			}
 			return output(map[string]any{"status": "dry_run", "to": allTo, "cc": allCC, "bcc": allBCC, "subject": subject, "attachment_names": baseNames(attachments), "body": text, "html": html, "message_size_bytes": len(built.Raw)}, func() {
 				fmt.Printf("To: %s\nCC: %s\nBCC: %s\nSubject: %s\nAttachments: %s\n\n%s\n", strings.Join(allTo, ", "), strings.Join(allCC, ", "), strings.Join(allBCC, ", "), subject, strings.Join(baseNames(attachments), ", "), text)
 				if html != "" {
@@ -271,22 +236,16 @@ func sendCmd() *cobra.Command {
 				fmt.Println("No emails were sent.")
 			})
 		}
-		client, e := auth.Load(name)
+		sender, e := openSender(cmd.Context(), name)
 		if e != nil {
 			return e
 		}
-		if accountEmail == "" {
-			ctx, cancel := context.WithTimeout(cmd.Context(), 30*time.Second)
-			p, pe := client.Profile(ctx)
-			cancel()
-			if pe != nil {
-				return pe
-			}
-			msg.Account = p.EmailAddress
-			built, e = msg.Build()
-			if e != nil {
-				return e
-			}
+		if e = applySenderIdentity(&msg, sender); e != nil {
+			return e
+		}
+		built, e := msg.Build()
+		if e != nil {
+			return e
 		}
 		when := time.Now()
 		if schedule != "" {
@@ -299,29 +258,17 @@ func sendCmd() *cobra.Command {
 			}
 			when = t
 		}
+		if schedule == "" {
+			return sendOne(cmd.Context(), sender, name, msg, "send")
+		}
 		db, e := database()
 		if e != nil {
 			return e
 		}
 		defer db.Close()
-		id, e := store.NewID()
+		id, row, e := createSendJob(db, name, "send", "pending", msg)
 		if e != nil {
 			return e
-		}
-		rec := store.Recipient{Email: strings.Join(allTo, ", "), ToJSON: joinJSON(allTo), CcJSON: joinJSON(allCC), BccJSON: joinJSON(allBCC), Subject: subject, Body: text, HTML: html, Status: "pending"}
-		jobStatus := "pending"
-		if schedule == "" {
-			jobStatus = "sending"
-		}
-		if e = db.CreateJob(store.Job{ID: id, Kind: "send", Status: jobStatus, Account: name, Subject: subject}, "", []store.Recipient{rec}); e != nil {
-			return e
-		}
-		rows, e := db.Recipients(id)
-		if e != nil || len(rows) == 0 {
-			if e != nil {
-				return e
-			}
-			return errors.New("could not load saved send job")
 		}
 		if when.After(time.Now()) {
 			fmt.Fprintf(os.Stderr, "Scheduled for %s. Keep mailsend running until it sends.\n", when.Local().Format(time.RFC3339))
@@ -330,11 +277,11 @@ func sendCmd() *cobra.Command {
 			case <-timer.C:
 			case <-cmd.Context().Done():
 				_ = db.UpdateJobStatus(id, "skipped", "interrupted before scheduled send")
-				_ = db.FinishAttempt(0, rows[0].ID, "skipped", "", "interrupted before send")
+				_ = db.FinishAttempt(0, row.ID, "skipped", "", "interrupted before send")
 				return cmd.Context().Err()
 			}
 		}
-		return sendSavedOne(cmd.Context(), db, client, rows[0], built.Raw, id)
+		return sendSavedOne(cmd.Context(), db, sender, row, built, id)
 	}}
 	cmd.Flags().StringArrayVar(&to, "to", nil, "Recipient address (repeatable; comma-separated lists also work)")
 	cmd.Flags().StringArrayVar(&cc, "cc", nil, "CC recipient (repeatable)")
@@ -345,21 +292,21 @@ func sendCmd() *cobra.Command {
 	cmd.Flags().StringVar(&htmlFile, "html-file", "", "Read HTML body from a file")
 	cmd.Flags().StringArrayVar(&attachments, "attach", nil, "Attachment path (repeatable)")
 	cmd.Flags().StringVar(&replyTo, "reply-to", "", "Reply-To address")
-	cmd.Flags().StringVar(&fromName, "from-name", "", "Display name for the authenticated From address")
+	cmd.Flags().StringVar(&fromName, "from-name", "", "Display name for the From address")
 	cmd.Flags().StringVar(&schedule, "schedule", "", "Schedule as YYYY-MM-DD HH:MM local time or RFC3339; keeps this process open")
 	cmd.Flags().BoolVar(&dry, "dry-run", false, "Validate and preview without sending")
 	cmd.Flags().BoolVar(&yes, "yes", false, "Skip confirmation when applicable")
 	_ = yes
 	return cmd
 }
-func sendSavedOne(ctx context.Context, db *store.DB, client *auth.Client, r store.Recipient, raw, jobID string) error {
+func sendSavedOne(ctx context.Context, db *store.DB, sender mailSender, r store.Recipient, built mailmsg.BuiltMessage, jobID string) error {
 	aid, e := db.StartAttempt(r)
 	if e != nil {
 		return e
 	}
 	ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
 	defer cancel()
-	msgid, ambiguous, e := sendSafe(ctx, client, raw)
+	msgid, ambiguous, e := sendSafe(ctx, sender, built)
 	status := "sent"
 	if e != nil {
 		status = "failed"
@@ -729,7 +676,7 @@ func bulkCmd() *cobra.Command {
 				return fmt.Errorf("bulk send cancelled")
 			}
 		}
-		client, e := auth.Load(account)
+		sender, e := openSender(cmd.Context(), account)
 		if e != nil {
 			return e
 		}
@@ -749,7 +696,7 @@ func bulkCmd() *cobra.Command {
 			return e
 		}
 		fmt.Fprintf(os.Stderr, "Starting bulk job %s (%d messages).\n", id, toSend)
-		return processBulk(cmd.Context(), db, client, id, yes, dailyLimit, delay, minDelay, maxDelay)
+		return processBulk(cmd.Context(), db, sender, id, yes, dailyLimit, delay, minDelay, maxDelay)
 	}}
 	cmd.Flags().StringVar(&csvPath, "csv", "", "CSV file with an email column and template variables")
 	cmd.Flags().StringVar(&templateName, "template", "", "Template file path or saved template name")
@@ -847,10 +794,14 @@ func resumeBulk(cmd *cobra.Command, id string, yes, dry bool) error {
 	if dry {
 		return fmt.Errorf("--dry-run cannot be combined with --resume; use mailsend history %s to inspect the persisted job", id)
 	}
-	if !auth.HasToken(job.Account) {
+	if !auth.Authenticated(job.Account) {
+		cfg, _ := auth.LookupProvider(job.Account)
+		if cfg.Provider == auth.ProviderSMTP {
+			return fmt.Errorf("account %q has no SMTP password in the OS keychain; run mailsend account add --provider smtp", job.Account)
+		}
 		return fmt.Errorf("account %q is not authenticated; run mailsend login --account %s", job.Account, job.Account)
 	}
-	client, e := auth.Load(job.Account)
+	sender, e := openSender(cmd.Context(), job.Account)
 	if e != nil {
 		return e
 	}
@@ -869,7 +820,7 @@ func resumeBulk(cmd *cobra.Command, id string, yes, dry bool) error {
 		if job.MaxDelaySeconds > 0 {
 			minDelay, maxDelay = job.DelaySeconds, job.MaxDelaySeconds
 		}
-		return processBulk(cmd.Context(), db, client, id, true, job.DailyLimit, job.DelaySeconds, minDelay, maxDelay)
+		return processBulk(cmd.Context(), db, sender, id, true, job.DailyLimit, job.DelaySeconds, minDelay, maxDelay)
 	}
 	if e = checkDailyLimit(db, job.Account, pending, job.DailyLimit); e != nil {
 		return e
@@ -886,7 +837,7 @@ func resumeBulk(cmd *cobra.Command, id string, yes, dry bool) error {
 	if job.MaxDelaySeconds > 0 {
 		minDelay, maxDelay = job.DelaySeconds, job.MaxDelaySeconds
 	}
-	return processBulk(cmd.Context(), db, client, id, yes, job.DailyLimit, job.DelaySeconds, minDelay, maxDelay)
+	return processBulk(cmd.Context(), db, sender, id, yes, job.DailyLimit, job.DelaySeconds, minDelay, maxDelay)
 }
 func countStatus(rows []store.Recipient, status string) int {
 	n := 0
@@ -897,7 +848,7 @@ func countStatus(rows []store.Recipient, status string) int {
 	}
 	return n
 }
-func processBulk(ctx context.Context, db *store.DB, client *auth.Client, id string, yes bool, dailyLimit, delay, minDelay, maxDelay int) error {
+func processBulk(ctx context.Context, db *store.DB, sender mailSender, id string, yes bool, dailyLimit, delay, minDelay, maxDelay int) error {
 	lock, e := acquireJobLock(id)
 	if e != nil {
 		return e
@@ -957,12 +908,18 @@ func processBulk(ctx context.Context, db *store.DB, client *auth.Client, id stri
 				}
 			}
 		}
-		to := []string{}
-		cc := []string{}
-		bcc := []string{}
-		_ = json.Unmarshal([]byte(r.ToJSON), &to)
-		_ = json.Unmarshal([]byte(r.CcJSON), &cc)
-		_ = json.Unmarshal([]byte(r.BccJSON), &bcc)
+		to, e := store.DecodeStringList(r.ToJSON)
+		if e != nil {
+			return fmt.Errorf("job %s recipient %s has an unreadable address list: %w", id, r.Email, e)
+		}
+		cc, e := store.DecodeStringList(r.CcJSON)
+		if e != nil {
+			return fmt.Errorf("job %s recipient %s has an unreadable cc list: %w", id, r.Email, e)
+		}
+		bcc, e := store.DecodeStringList(r.BccJSON)
+		if e != nil {
+			return fmt.Errorf("job %s recipient %s has an unreadable bcc list: %w", id, r.Email, e)
+		}
 		aid, e := db.StartAttempt(r)
 		if e != nil {
 			return e
@@ -975,7 +932,15 @@ func processBulk(ctx context.Context, db *store.DB, client *auth.Client, id stri
 			processedThisRun++
 			continue
 		}
-		msg := mailmsg.Message{To: to, Cc: cc, Bcc: bcc, Subject: r.Subject, Text: r.Body, HTML: r.HTML, Attachments: attachmentPaths(r.Attachments), Account: client.Account.Email}
+		msg := mailmsg.Message{To: to, Cc: cc, Bcc: bcc, Subject: r.Subject, Text: r.Body, HTML: r.HTML, Attachments: attachmentPaths(r.Attachments)}
+		if e = applySenderIdentity(&msg, sender); e != nil {
+			failed++
+			if se := db.FinishAttempt(aid, r.ID, "failed", "", e.Error()); se != nil {
+				return se
+			}
+			processedThisRun++
+			continue
+		}
 		built, e := msg.Build()
 		if e != nil {
 			failed++
@@ -986,7 +951,7 @@ func processBulk(ctx context.Context, db *store.DB, client *auth.Client, id stri
 			continue
 		}
 		sendCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
-		msgID, ambiguous, e := sendSafe(sendCtx, client, built.Raw)
+		msgID, ambiguous, e := sendSafe(sendCtx, sender, built)
 		cancel()
 		status := "sent"
 		if e != nil {
@@ -1010,8 +975,12 @@ func processBulk(ctx context.Context, db *store.DB, client *auth.Client, id stri
 			fmt.Fprintf(os.Stderr, "[%d/%d] sent to %s (message %s)\n", i+1, len(rows), r.Email, msgID)
 		}
 		if e != nil && auth.IsQuotaError(e) {
-			_ = db.UpdateJobStatus(id, "partial", "Gmail quota response; pending recipients remain")
-			return fmt.Errorf("Gmail quota error stopped job %s safely: %w", id, e)
+			label := "Gmail quota"
+			if sender.Provider() == auth.ProviderSMTP {
+				label = "SMTP rate limit"
+			}
+			_ = db.UpdateJobStatus(id, "partial", label+" response; pending recipients remain")
+			return fmt.Errorf("%s stopped job %s safely: %w", label, id, e)
 		}
 		if e != nil && ambiguous {
 			_ = db.UpdateJobStatus(id, "partial", "send response was ambiguous; pending recipients remain")
@@ -1022,8 +991,14 @@ func processBulk(ctx context.Context, db *store.DB, client *auth.Client, id stri
 			return fmt.Errorf("job %s interrupted; resume pending recipients with --resume: %w", id, ctx.Err())
 		}
 		if e != nil && auth.IsAuthError(e) {
-			_ = db.UpdateJobStatus(id, "partial", "Google authorization failed; reauthenticate before resuming")
-			return fmt.Errorf("job %s stopped because Google authorization failed: %w", id, e)
+			reason := "Google authorization failed; reauthenticate before resuming"
+			text := "Google authorization failed"
+			if sender.Provider() == auth.ProviderSMTP {
+				reason = "SMTP authentication failed; check the account password before resuming"
+				text = "SMTP authentication failed"
+			}
+			_ = db.UpdateJobStatus(id, "partial", reason)
+			return fmt.Errorf("job %s stopped because %s: %w", id, text, e)
 		}
 	}
 	latest, e := db.Recipients(id)
@@ -1073,10 +1048,10 @@ func acquireJobLock(id string) (*flock.Flock, error) {
 	return lock, nil
 }
 
-func sendSafe(ctx context.Context, client *auth.Client, raw string) (string, bool, error) {
+func sendSafe(ctx context.Context, sender mailSender, built mailmsg.BuiltMessage) (string, bool, error) {
 	for attempt := 0; attempt < 4; attempt++ {
-		id, ambiguous, err := client.Send(ctx, raw)
-		if err == nil || !auth.Retryable(err) || attempt == 3 {
+		id, ambiguous, err := sender.Send(ctx, built)
+		if err == nil || ambiguous || !auth.Retryable(err) || attempt == 3 {
 			return id, ambiguous, err
 		}
 		backoff := auth.RetryDelay(err, time.Duration(1<<attempt)*time.Second)
@@ -1088,7 +1063,7 @@ func sendSafe(ctx context.Context, client *auth.Client, raw string) (string, boo
 		case <-timer.C:
 		case <-ctx.Done():
 			timer.Stop()
-			return "", false, fmt.Errorf("send retry was interrupted after Gmail rejected the previous attempt: %w", ctx.Err())
+			return "", false, fmt.Errorf("send retry was interrupted after the server rejected the previous attempt: %w", ctx.Err())
 		}
 	}
 	return "", false, fmt.Errorf("send retry loop ended unexpectedly")

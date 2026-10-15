@@ -2,7 +2,9 @@ package mail
 
 import (
 	"bytes"
+	"crypto/rand"
 	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"mime"
@@ -17,19 +19,26 @@ import (
 )
 
 type Message struct {
-	To, Cc, Bcc []string
-	Subject     string
-	Text        string
-	HTML        string
-	Attachments []string
-	ReplyTo     string
-	FromName    string
-	Account     string
+	To, Cc, Bcc      []string
+	Subject          string
+	Text             string
+	HTML             string
+	Attachments      []string
+	ReplyTo          string
+	FromName         string
+	Account          string
+	MessageID        string
+	IncludeMessageID bool
+	OmitBccHeader    bool
+	Date             time.Time
 }
 
 type BuiltMessage struct {
-	Raw        string
-	Recipients []string
+	Raw          string
+	MIME         []byte
+	Recipients   []string
+	MessageID    string
+	EnvelopeFrom string
 }
 
 func ParseAddresses(values []string) ([]string, error) {
@@ -94,7 +103,36 @@ func (m Message) Build() (BuiltMessage, error) {
 		return BuiltMessage{}, err
 	}
 	if len(to)+len(cc)+len(bcc) > 500 {
-		return BuiltMessage{}, fmt.Errorf("Gmail allows at most 500 recipients per message")
+		return BuiltMessage{}, fmt.Errorf("at most 500 recipients are allowed per message")
+	}
+	bareFrom := ""
+	if strings.TrimSpace(m.Account) != "" {
+		parsed, err := mail.ParseAddress(m.Account)
+		if err != nil || parsed.Address == "" || strings.ContainsAny(parsed.Address, "\r\n<>") {
+			return BuiltMessage{}, fmt.Errorf("invalid from address %q", m.Account)
+		}
+		bareFrom = parsed.Address
+	}
+	if strings.ContainsAny(m.MessageID, "\r\n") {
+		return BuiltMessage{}, fmt.Errorf("invalid message id")
+	}
+	if m.IncludeMessageID && m.MessageID == "" {
+		m.MessageID, err = newMessageID(bareFrom)
+		if err != nil {
+			return BuiltMessage{}, err
+		}
+	}
+	sentAt := m.Date
+	if sentAt.IsZero() {
+		sentAt = time.Now()
+	}
+	replyTo := ""
+	if m.ReplyTo != "" {
+		parsed, err := mail.ParseAddress(m.ReplyTo)
+		if err != nil {
+			return BuiltMessage{}, fmt.Errorf("invalid reply-to address %q", m.ReplyTo)
+		}
+		replyTo = parsed.String()
 	}
 	writeHeaders := func(w io.Writer) {
 		if len(to) > 0 {
@@ -103,20 +141,24 @@ func (m Message) Build() (BuiltMessage, error) {
 		if len(cc) > 0 {
 			fmt.Fprintf(w, "Cc: %s\r\n", formatAddressList(cc))
 		}
-		// Gmail uses Bcc to address the message and strips it from delivered copies.
-		if len(bcc) > 0 {
+		// Gmail uses the Bcc header to address the message and strips it from
+		// delivered copies. SMTP omits the header and uses envelope recipients.
+		if len(bcc) > 0 && !m.OmitBccHeader {
 			fmt.Fprintf(w, "Bcc: %s\r\n", formatAddressList(bcc))
 		}
-		if m.FromName != "" {
-			fmt.Fprintf(w, "From: %s\r\n", (&mail.Address{Name: m.FromName, Address: m.Account}).String())
-		} else if m.Account != "" {
-			fmt.Fprintf(w, "From: %s\r\n", (&mail.Address{Address: m.Account}).String())
+		if m.FromName != "" && bareFrom != "" {
+			fmt.Fprintf(w, "From: %s\r\n", (&mail.Address{Name: m.FromName, Address: bareFrom}).String())
+		} else if bareFrom != "" {
+			fmt.Fprintf(w, "From: %s\r\n", (&mail.Address{Address: bareFrom}).String())
 		}
 		fmt.Fprintf(w, "Subject: %s\r\n", mime.QEncoding.Encode("UTF-8", m.Subject))
-		fmt.Fprintf(w, "Date: %s\r\n", time.Now().Format(time.RFC1123Z))
+		fmt.Fprintf(w, "Date: %s\r\n", sentAt.Format(time.RFC1123Z))
+		if m.MessageID != "" {
+			fmt.Fprintf(w, "Message-ID: %s\r\n", m.MessageID)
+		}
 		fmt.Fprint(w, "MIME-Version: 1.0\r\n")
-		if m.ReplyTo != "" {
-			fmt.Fprintf(w, "Reply-To: %s\r\n", m.ReplyTo)
+		if replyTo != "" {
+			fmt.Fprintf(w, "Reply-To: %s\r\n", replyTo)
 		}
 	}
 	var payload bytes.Buffer
@@ -141,7 +183,26 @@ func (m Message) Build() (BuiltMessage, error) {
 	}
 	all := append(append([]string{}, to...), cc...)
 	all = append(all, bcc...)
-	return BuiltMessage{Raw: base64.RawURLEncoding.EncodeToString(payload.Bytes()), Recipients: all}, nil
+	mimeBytes := append([]byte(nil), payload.Bytes()...)
+	return BuiltMessage{Raw: base64.RawURLEncoding.EncodeToString(mimeBytes), MIME: mimeBytes, Recipients: all, MessageID: m.MessageID, EnvelopeFrom: bareFrom}, nil
+}
+
+func newMessageID(from string) (string, error) {
+	domain := ""
+	if parsed, err := mail.ParseAddress(from); err == nil {
+		from = parsed.Address
+	}
+	if at := strings.LastIndex(from, "@"); at >= 0 && at < len(from)-1 {
+		domain = strings.TrimSuffix(from[at+1:], ".")
+	}
+	if domain == "" || strings.ContainsAny(domain, " \t\r\n<>@") {
+		return "", fmt.Errorf("from address %q has no domain for Message-ID", from)
+	}
+	buf := make([]byte, 16)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("<%s.%d@%s>", hex.EncodeToString(buf), time.Now().UnixNano(), domain), nil
 }
 
 func formatAddressList(addrs []string) string {

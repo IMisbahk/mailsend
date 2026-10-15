@@ -1,8 +1,8 @@
 # mailsend
 
-`mailsend` is a standalone command-line email client for Gmail. It authenticates with Google OAuth 2.0 and sends through Gmail's `users.messages.send` API. It does not use Apps Script, SMTP, or Gmail passwords.
+`mailsend` is a standalone command-line email client. Gmail accounts authenticate with Google OAuth 2.0 and send through Gmail's `users.messages.send` API. SMTP accounts send through the host, port, and TLS mode stored for that account. The program does not use Apps Script or Gmail passwords, and it does not assume any SMTP server.
 
-The program is a Go binary with SQLite compiled in using a pure-Go driver. End users do not need Go, Python, SQLite, or another runtime installed. OAuth client credentials are configured separately from the binary, and refresh/access tokens are held in the operating system credential store.
+The program is a Go binary with SQLite compiled in using a pure-Go driver. End users do not need Go, Python, SQLite, or another runtime installed. OAuth client credentials are configured separately from the binary. Gmail refresh/access tokens and SMTP passwords are held in the operating system credential store, not in `accounts.json`.
 
 ## Package the binary
 
@@ -70,7 +70,7 @@ Google opens the authorization page in your system browser and returns to a temp
 
 While an external OAuth project is in **Testing**, Google expires refresh tokens for apps requesting Gmail scopes after seven days. That means a testing account may need to run `mailsend login` again weekly. For ongoing distribution, move the consent configuration to production and complete the applicable Google verification. See Google's [refresh-token expiration guidance](https://developers.google.com/identity/protocols/oauth2#expiration).
 
-For multiple named accounts:
+For multiple named Gmail accounts:
 
 ```sh
 mailsend login --account sunbeam
@@ -78,6 +78,91 @@ mailsend login --account personal
 mailsend account --account personal
 mailsend send --account sunbeam --to alex@example.com --subject "Hello" --body "Hi"
 ```
+
+Accounts saved before SMTP support have no `provider` field. Those accounts, including an existing `sunbeam` entry, remain Gmail accounts. Adding SMTP does not rewrite them.
+
+## SMTP accounts
+
+Each account is either `gmail` or `smtp`. The host is always the one you pass to `account add`. Default ports are protocol defaults only: 587 for `starttls`, 465 for `ssl` (implicit TLS), and 25 for `none`. The default TLS mode is `starttls`.
+
+The password is never a command flag and is never written to `accounts.json`. It is stored in the same OS keychain service as Gmail tokens, under a separate item. Supply it in one of three ways, in this order: `--password-stdin`, the `MAILSEND_SMTP_PASSWORD` environment variable, or an interactive prompt when stdin is a terminal.
+
+Use a new account name so you do not replace a Gmail account. This example uses `sunbeam-smtp` and the From address `misbah@sunbeam.agency`. Replace `mail.example.com` with your server:
+
+```sh
+mailsend account add sunbeam-smtp \
+  --provider smtp \
+  --host mail.example.com \
+  --port 587 \
+  --tls starttls \
+  --username misbah@sunbeam.agency \
+  --from misbah@sunbeam.agency
+```
+
+The same account from stdin, or from the environment:
+
+```sh
+printf '%s\n' "$SMTP_PASSWORD" | mailsend account add sunbeam-smtp \
+  --provider smtp \
+  --host mail.example.com \
+  --port 587 \
+  --tls starttls \
+  --username misbah@sunbeam.agency \
+  --from misbah@sunbeam.agency \
+  --reply-to replies@sunbeam.agency \
+  --password-stdin
+
+MAILSEND_SMTP_PASSWORD="$SMTP_PASSWORD" mailsend account add sunbeam-smtp \
+  --provider smtp \
+  --host mail.example.com \
+  --port 587 \
+  --tls starttls \
+  --username misbah@sunbeam.agency \
+  --from misbah@sunbeam.agency
+```
+
+`--password-stdin` wins over the environment variable. Running `account add` again for the same SMTP name updates the server settings and replaces the keychain password. A Gmail name such as `sunbeam` is refused; log that account out first or pick another name. The first account stays the default. A later SMTP account does not replace an existing default.
+
+Check the connection without sending a message. This opens the configured host, negotiates the selected TLS mode, and authenticates:
+
+```sh
+mailsend account test sunbeam-smtp
+mailsend account --account sunbeam-smtp
+```
+
+`--send-to` authenticates and then sends one test message, which is recorded in history with kind `test`:
+
+```sh
+mailsend account test sunbeam-smtp --send-to alex@example.com
+```
+
+`send`, `bulk`, `history`, `--dry-run`, `--from-name`, `--json`, and the local delay / `--daily-limit` controls use the same commands for both providers:
+
+```sh
+mailsend send --account sunbeam-smtp \
+  --to alex@example.com \
+  --subject "Hello" \
+  --body "Hi from SMTP" \
+  --from-name "Misbah"
+```
+
+`--tls none` is cleartext and is reported by `account test`. TLS 1.2 or newer is required for `starttls` and `ssl`, and the certificate must match the configured host. Point `MAILSEND_SMTP_CA_FILE` at a PEM file when the server uses a private CA. There is no option to skip certificate verification.
+
+`quota` on an SMTP account says the server does not expose a remaining-send count. The local bulk `--daily-limit` still applies. On a Gmail account, `quota` keeps the existing Gmail API explanation.
+
+SMTP messages include a `Date` header, a `Message-ID` on the From domain, UTF-8 encoded headers, plain text, and optional HTML. Attachments use the same MIME structure as Gmail sends. The envelope sender is the configured From address. BCC recipients are on the envelope and are omitted from the visible headers. Gmail sends still include the BCC header so the Gmail API can deliver it.
+
+Temporary SMTP 4xx replies are retried with the same backoff as retryable Gmail errors. Permanent 5xx replies fail that recipient. Authentication failures and quota-like 4xx text stop a bulk job. If the connection drops after DATA and no reply arrives, the recipient is `uncertain` and is not retried automatically. `--json` errors for SMTP include `type` `smtp_error`, `stage`, `temporary`, `permanent`, and `smtp_code`.
+
+What differs from Gmail:
+
+- Gmail stores an OAuth token. SMTP stores a password in the keychain and the host, port, TLS mode, username, From address, and optional reply-to in `accounts.json`.
+- The Gmail From address is the Google account. The SMTP From address is `--from`. Neither path accepts an arbitrary per-message From address. `--from-name` sets the display name for both.
+- Gmail returns the API message id. SMTP records the Message-ID generated on the sender's domain.
+- Gmail messages include a BCC header. SMTP messages keep BCC only in the envelope.
+- `account` and `account test` call Google's profile endpoint for Gmail. For SMTP they report the saved settings, or connect, negotiate TLS, and authenticate, without sending unless `--send-to` is set.
+- `quota` text names the active provider. Both report that a remaining-send count is unavailable.
+- SMTP 4xx responses are temporary and retryable. SMTP 5xx responses are permanent. A lost reply after DATA is uncertain for both providers.
 
 ## Commands
 
@@ -148,7 +233,7 @@ mailsend bulk --csv contacts.csv --template outreach.txt --subject "Hello {{name
   --min-delay 20 --max-delay 60 --daily-limit 25 --yes
 ```
 
-`--daily-limit` caps the bulk campaign against successful sends recorded by this installation today. It cannot see mail sent outside mailsend, and it does not constrain standalone `send` commands. Gmail does not provide a reliable remaining daily-send counter through the API, so the CLI never represents this local limit as Google's quota. Gmail still applies its own limits; a quota/rate response stops the campaign. Use small batches and comply with Google's [sending limits and API error guidance](https://developers.google.com/workspace/gmail/api/guides/handle-errors).
+`--daily-limit` caps the bulk campaign against successful sends recorded by this installation today. It cannot see mail sent outside mailsend, and it does not constrain standalone `send` commands. Neither Gmail nor a generic SMTP server provides a reliable remaining daily-send counter, so the CLI never represents this local limit as the provider's quota. A Gmail quota/rate response, or an SMTP 4xx response whose text describes a rate or quota limit, stops the campaign. Other SMTP 4xx replies are retried for that recipient; SMTP 5xx replies fail that recipient and the job continues. Use small batches and comply with Google's [sending limits and API error guidance](https://developers.google.com/workspace/gmail/api/guides/handle-errors) when the account is Gmail.
 
 Jobs and individual recipients are persisted in SQLite before sending. Use the printed job ID to inspect or resume:
 
@@ -160,7 +245,7 @@ mailsend bulk --resume 20261004T120000-abcdef0123456789abcdef01 --yes
 
 Successful recipients are never resent. Definite API failures and unsent pending rows can be resumed. If the process loses a send response, the recipient becomes `uncertain` and is not automatically resent because Gmail may already have accepted it. A user can inspect job history and decide how to handle that address. A process-level lock prevents two local processes from running one bulk job at once. Attachment file hashes are checked on resume; a changed attachment is refused.
 
-`sent` means Gmail returned a successful API response and message ID. It is not a delivery receipt or proof the message reached the recipient's inbox.
+`sent` means the provider accepted the message and returned an id. For Gmail that id comes from the API. For SMTP it is the Message-ID on the sender's domain. It is not a delivery receipt or proof the message reached the recipient's inbox.
 
 ### Templates
 
@@ -187,7 +272,7 @@ mailsend logout
 mailsend logout --account personal
 ```
 
-`quota` clearly reports that Gmail does not expose a reliable remaining-send count. It does not claim that mailsend can bypass Gmail limits. `account` reports the authorized account and authentication state; it does not query aliases because that would require additional Gmail settings scope.
+`quota` reports that the selected provider does not expose a reliable remaining-send count. It does not claim that mailsend can bypass Gmail or SMTP limits. `account` reports the authorized Gmail identity, or the saved SMTP host and From address. The Gmail view does not query aliases because that would require additional Gmail settings scope. `account test [name]` checks Gmail with the profile endpoint, or connects and authenticates to the configured SMTP server without sending.
 
 `history --json` and other useful output commands support `--json`. OAuth tokens are never included in command output. Normal history shows the To recipient and message ID, not BCC.
 
@@ -202,11 +287,11 @@ The schedule is local time; RFC3339 timestamps with an explicit zone are also ac
 
 ## Data and security
 
-- OAuth access and refresh tokens are stored in the OS keyring, never in the SQLite database or logs.
+- OAuth access and refresh tokens, and SMTP passwords, are stored in the OS keyring, never in the SQLite database, `accounts.json`, or logs. `logout` removes the token or password for that account.
 - The SQLite database, config directory, account metadata, and saved templates are created with owner-only permissions. The local database includes rendered message content so interrupted jobs can resume exactly; protect the OS user account and do not share the config directory.
-- OAuth client JSON is read from the configured path and is ignored by git patterns. Do not commit it.
-- Bulk attempts that may have reached Gmail are marked `uncertain` and never automatically retried. Only explicit HTTP 429 / user rate-limit responses are retried with exponential backoff (and `Retry-After` when supplied); transport loss and server errors are not retried.
-- Gmail API does not give this CLI a safe way to determine whether an ambiguous timed-out send was delivered. Check the Gmail Sent folder before manually retrying an uncertain row.
+- OAuth client JSON is read from the configured path and is ignored by git patterns. Do not commit it. An existing `accounts.json` without a `providers` object remains valid.
+- Bulk attempts that may have reached the provider are marked `uncertain` and never automatically retried. Retryable failures are HTTP 429 / Gmail user rate-limit responses and SMTP 4xx replies, using exponential backoff (and `Retry-After` when Gmail supplies it). Transport loss, a lost SMTP reply after DATA, and permanent 5xx replies are not retried.
+- Neither provider gives this CLI a safe way to determine whether an ambiguous timed-out send was delivered. Check the mailbox's Sent folder before manually retrying an uncertain row.
 
 ## Development and tests
 
@@ -218,7 +303,7 @@ make build
 ./build/mailsend --help
 ```
 
-The unit suite uses local HTTP mocks for Gmail and does not require Google credentials. It covers OAuth API error classification, send-response ambiguity, MIME alternatives and attachments, recipient parsing, templates, CSV parsing, rate delay bounds, SQLite job history, duplicate detection, and crash recovery.
+The unit suite uses local HTTP mocks for Gmail and an in-process SMTP server. It does not require Google credentials or a real mail server. It covers OAuth API error classification, SMTP authentication, STARTTLS, implicit TLS, cleartext, 4xx and 5xx replies, send-response ambiguity, MIME alternatives and attachments, recipient parsing, templates, CSV parsing, rate delay bounds, SQLite job history, duplicate detection, and crash recovery. Legacy account files without a provider stay on the Gmail path.
 
 Manual integration test after OAuth setup (this sends a real message):
 
@@ -235,4 +320,4 @@ Confirm delivery and the recorded Gmail message ID with:
 mailsend history
 ```
 
-To build one platform locally, run `./scripts/build-release.sh darwin arm64`, replacing the target with one of `darwin|linux|windows` and `amd64|arm64`. The script sets `CGO_ENABLED=0`; no external runtime libraries are needed for SQLite. The destination operating system still needs its normal keyring service for secure OAuth token storage.
+To build one platform locally, run `./scripts/build-release.sh darwin arm64`, replacing the target with one of `darwin|linux|windows` and `amd64|arm64`. The script sets `CGO_ENABLED=0`; no external runtime libraries are needed for SQLite. The destination operating system still needs its normal keyring service for Gmail tokens and SMTP passwords.

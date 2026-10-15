@@ -99,10 +99,7 @@ func (d *DB) CreateJob(j Job, fingerprint string, recipients []Recipient) error 
 	for _, r := range recipients {
 		vars, _ := json.Marshal(r.Variables)
 		attachments, _ := json.Marshal(r.Attachments)
-		to, _ := json.Marshal(r.ToJSON)
-		cc, _ := json.Marshal(r.CcJSON)
-		bcc, _ := json.Marshal(r.BccJSON)
-		_, e = tx.Exec(`INSERT INTO recipients(job_id,email,to_json,cc_json,bcc_json,subject,body,html,variables_json,attachments_json,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`, j.ID, r.Email, string(to), string(cc), string(bcc), r.Subject, r.Body, r.HTML, string(vars), string(attachments), r.Status, n, n)
+		_, e = tx.Exec(`INSERT INTO recipients(job_id,email,to_json,cc_json,bcc_json,subject,body,html,variables_json,attachments_json,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`, j.ID, r.Email, addressColumn(r.ToJSON), addressColumn(r.CcJSON), addressColumn(r.BccJSON), r.Subject, r.Body, r.HTML, string(vars), string(attachments), r.Status, n, n)
 		if e != nil {
 			return e
 		}
@@ -261,6 +258,34 @@ func (d *DB) HasSentInCampaign(email, fingerprint string) (bool, error) {
 	return n > 0, e
 }
 
+func addressColumn(raw string) string {
+	if strings.TrimSpace(raw) == "" {
+		return "[]"
+	}
+	return raw
+}
+
+// DecodeStringList reads an address list stored as a JSON array.
+// Older databases stored that array encoded a second time as a JSON string.
+func DecodeStringList(raw string) ([]string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || raw == "null" {
+		return nil, nil
+	}
+	var list []string
+	if err := json.Unmarshal([]byte(raw), &list); err == nil {
+		return list, nil
+	}
+	var encoded string
+	if err := json.Unmarshal([]byte(raw), &encoded); err != nil {
+		return nil, fmt.Errorf("invalid address list")
+	}
+	if err := json.Unmarshal([]byte(encoded), &list); err != nil {
+		return nil, fmt.Errorf("invalid address list")
+	}
+	return list, nil
+}
+
 func (d *DB) RecoverSending(job string) error {
 	tx, err := d.Begin()
 	if err != nil {
@@ -268,10 +293,10 @@ func (d *DB) RecoverSending(job string) error {
 	}
 	defer tx.Rollback()
 	n := now()
-	if _, err = tx.Exec(`UPDATE attempts SET status='uncertain',finished_at=?,error='process exited while sending; Gmail acceptance is unknown' WHERE status='sending' AND recipient_id IN (SELECT id FROM recipients WHERE job_id=?)`, n, job); err != nil {
+	if _, err = tx.Exec(`UPDATE attempts SET status='uncertain',finished_at=?,error='process exited while sending; server acceptance is unknown' WHERE status='sending' AND recipient_id IN (SELECT id FROM recipients WHERE job_id=?)`, n, job); err != nil {
 		return err
 	}
-	if _, err = tx.Exec(`UPDATE recipients SET status='uncertain',error='process exited while sending; Gmail acceptance is unknown',updated_at=? WHERE status='sending' AND job_id=?`, n, job); err != nil {
+	if _, err = tx.Exec(`UPDATE recipients SET status='uncertain',error='process exited while sending; server acceptance is unknown',updated_at=? WHERE status='sending' AND job_id=?`, n, job); err != nil {
 		return err
 	}
 	return tx.Commit()

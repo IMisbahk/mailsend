@@ -36,9 +36,10 @@ type oauthClient struct {
 	TokenURI     string `json:"token_uri"`
 }
 type manifest struct {
-	Default  string            `json:"default"`
-	Accounts []string          `json:"accounts"`
-	Emails   map[string]string `json:"emails,omitempty"`
+	Default   string                    `json:"default"`
+	Accounts  []string                  `json:"accounts"`
+	Emails    map[string]string         `json:"emails,omitempty"`
+	Providers map[string]ProviderConfig `json:"providers,omitempty"`
 }
 type Account struct {
 	Name   string         `json:"name"`
@@ -71,6 +72,13 @@ func (c *Client) identityURL() string {
 }
 
 func ConfigDir() (string, error) {
+	if custom := strings.TrimSpace(os.Getenv("MAILSEND_CONFIG_DIR")); custom != "" {
+		if e := os.MkdirAll(custom, 0700); e != nil {
+			return "", e
+		}
+		_ = os.Chmod(custom, 0700)
+		return custom, nil
+	}
 	root, e := os.UserConfigDir()
 	if e != nil {
 		return "", e
@@ -250,7 +258,10 @@ func apiError(resp *http.Response) error {
 	}
 	return &APIError{Status: resp.StatusCode, Details: readError(resp), RetryAfter: delay}
 }
-func Retryable(err error) bool { var api *APIError; return errors.As(err, &api) && api.Retryable() }
+func Retryable(err error) bool {
+	var retry interface{ Retryable() bool }
+	return errors.As(err, &retry) && retry.Retryable()
+}
 func RetryDelay(err error, fallback time.Duration) time.Duration {
 	var api *APIError
 	if errors.As(err, &api) && api.RetryAfter > 0 {
@@ -260,11 +271,12 @@ func RetryDelay(err error, fallback time.Duration) time.Duration {
 }
 func IsQuotaError(err error) bool {
 	var api *APIError
-	if !errors.As(err, &api) {
-		return false
+	if errors.As(err, &api) {
+		details := strings.ToLower(api.Details)
+		return api.Status == 429 || (api.Status == 403 && (strings.Contains(details, "limit") || strings.Contains(details, "quota") || strings.Contains(details, "rate")))
 	}
-	details := strings.ToLower(api.Details)
-	return api.Status == 429 || (api.Status == 403 && (strings.Contains(details, "limit") || strings.Contains(details, "quota") || strings.Contains(details, "rate")))
+	var quota interface{ IsQuota() bool }
+	return errors.As(err, &quota) && quota.IsQuota()
 }
 func IsAuthError(err error) bool {
 	if err == nil {
@@ -272,6 +284,10 @@ func IsAuthError(err error) bool {
 	}
 	var api *APIError
 	if errors.As(err, &api) && (api.Status == 401 || (api.Status == 403 && !api.Retryable())) {
+		return true
+	}
+	var authn interface{ IsAuth() bool }
+	if errors.As(err, &authn) && authn.IsAuth() {
 		return true
 	}
 	return strings.Contains(strings.ToLower(err.Error()), "run mailsend login")
@@ -470,8 +486,10 @@ func Email(name string) string {
 func Accounts() (manifest, error) { return readManifest() }
 func Logout(name string) error {
 	name = accountName(name)
-	err := keyring.Delete(service, tokenKey(name))
-	if err != nil && !strings.Contains(strings.ToLower(err.Error()), "not found") {
+	if err := deleteSecret(tokenKey(name)); err != nil {
+		return err
+	}
+	if err := deleteSecret(smtpPasswordKey(name)); err != nil {
 		return err
 	}
 	m, err := readManifest()
@@ -486,6 +504,12 @@ func Logout(name string) error {
 	}
 	m.Accounts = list
 	delete(m.Emails, name)
+	if m.Providers != nil {
+		delete(m.Providers, name)
+		if len(m.Providers) == 0 {
+			m.Providers = nil
+		}
+	}
 	if m.Default == name {
 		m.Default = ""
 		if len(list) > 0 {

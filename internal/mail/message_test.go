@@ -109,6 +109,51 @@ func TestMultipartAlternativeAndAttachmentEncoding(t *testing.T) {
 	}
 }
 
+func TestSMTPMessageIDHidesBccAndEncodesUTF8(t *testing.T) {
+	built, err := (Message{
+		To: []string{"alex@example.com"}, Cc: []string{"cc@example.com"}, Bcc: []string{"hidden@example.com"},
+		Subject: "Café update", Text: "plain", HTML: "<b>café</b>", FromName: "Misbah",
+		Account: "misbah@sunbeam.agency", ReplyTo: "replies@sunbeam.agency",
+		IncludeMessageID: true, OmitBccHeader: true,
+	}).Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasSuffix(built.MessageID, "@sunbeam.agency>") || !strings.HasPrefix(built.MessageID, "<") {
+		t.Fatalf("message id %q", built.MessageID)
+	}
+	if built.EnvelopeFrom != "misbah@sunbeam.agency" {
+		t.Fatalf("envelope from %q", built.EnvelopeFrom)
+	}
+	if len(built.Recipients) != 3 || built.Recipients[2] != "hidden@example.com" {
+		t.Fatalf("envelope recipients %#v", built.Recipients)
+	}
+	raw := string(built.MIME)
+	parsed, err := mail.ReadMessage(strings.NewReader(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parsed.Header.Get("Message-ID") != built.MessageID {
+		t.Fatalf("header message id %q", parsed.Header.Get("Message-Id"))
+	}
+	if parsed.Header.Get("Date") == "" {
+		t.Fatal("missing Date header")
+	}
+	if parsed.Header.Get("Bcc") != "" {
+		t.Fatalf("bcc header leaked: %q", parsed.Header.Get("Bcc"))
+	}
+	if !strings.Contains(parsed.Header.Get("From"), "misbah@sunbeam.agency") || !strings.Contains(strings.ToLower(parsed.Header.Get("From")), "misbah") {
+		t.Fatalf("from header %q", parsed.Header.Get("From"))
+	}
+	decoded, err := new(mime.WordDecoder).DecodeHeader(parsed.Header.Get("Subject"))
+	if err != nil || decoded != "Café update" {
+		t.Fatalf("subject %q, %v", parsed.Header.Get("Subject"), err)
+	}
+	if !strings.Contains(parsed.Header.Get("Reply-To"), "replies@sunbeam.agency") {
+		t.Fatalf("reply-to %q", parsed.Header.Get("Reply-To"))
+	}
+}
+
 func TestBuildRejectsBadInputs(t *testing.T) {
 	cases := []Message{{Subject: "x", Text: "body"}, {To: []string{"bad"}, Subject: "x", Text: "body"}, {To: []string{"a@example.com"}, Subject: "x\r\nBcc:x@y.com", Text: "body"}, {To: []string{"a@example.com"}, Subject: "x", FromName: "bad\r\nBcc:x@y.com", Text: "body"}}
 	for _, m := range cases {

@@ -1,6 +1,7 @@
 package store
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -63,6 +64,33 @@ func TestJobPersistenceResumeAndHistory(t *testing.T) {
 	}
 	_ = attempt
 }
+func TestAddressListsRoundTripAndLegacyEncoding(t *testing.T) {
+	db, err := Open(filepath.Join(t.TempDir(), "state.sqlite3"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	recipient := Recipient{Email: "a@example.com", ToJSON: `["a@example.com"]`, CcJSON: `["cc@example.com"]`, BccJSON: `["hidden@example.com"]`, Subject: "hello", Status: "pending"}
+	if err = db.CreateJob(Job{ID: "addr-job", Kind: "send", Status: "pending", Account: "agency"}, "", []Recipient{recipient}); err != nil {
+		t.Fatal(err)
+	}
+	var toJSON, ccJSON, bccJSON string
+	if err = db.QueryRow(`SELECT to_json, cc_json, bcc_json FROM recipients WHERE job_id=?`, "addr-job").Scan(&toJSON, &ccJSON, &bccJSON); err != nil {
+		t.Fatal(err)
+	}
+	if toJSON != `["a@example.com"]` || ccJSON != `["cc@example.com"]` || bccJSON != `["hidden@example.com"]` {
+		t.Fatalf("stored lists %s %s %s", toJSON, ccJSON, bccJSON)
+	}
+	legacy, err := json.Marshal(`["legacy@example.com"]`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	list, err := DecodeStringList(string(legacy))
+	if err != nil || len(list) != 1 || list[0] != "legacy@example.com" {
+		t.Fatalf("legacy list %#v, %v", list, err)
+	}
+}
+
 func TestDatabasePermissions(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "private", "db.sqlite3")
 	db, err := Open(p)
