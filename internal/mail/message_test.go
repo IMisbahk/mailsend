@@ -1,15 +1,20 @@
 package mail
 
 import (
+	"bytes"
 	"encoding/base64"
+	"fmt"
 	"io"
 	"mime"
 	"mime/multipart"
+	"mime/quotedprintable"
 	"net/mail"
+	"net/textproto"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestParseAddressesAndBuildHeaders(t *testing.T) {
@@ -152,6 +157,288 @@ func TestSMTPMessageIDHidesBccAndEncodesUTF8(t *testing.T) {
 	if !strings.Contains(parsed.Header.Get("Reply-To"), "replies@sunbeam.agency") {
 		t.Fatalf("reply-to %q", parsed.Header.Get("Reply-To"))
 	}
+}
+
+func TestGmailPlainTextMatchesPreV010Structure(t *testing.T) {
+	sentAt := time.Date(2026, 10, 15, 12, 0, 0, 0, time.FixedZone("UTC", 0))
+	account := "misbah@sunbeam.agency"
+	to := []string{"alex@example.com"}
+	subject := "Hello"
+	for _, text := range []string{"Hi from mailsend", "Hello from a body file\nSecond line\n"} {
+		legacy := legacyGmailPlain(to, subject, text, account, sentAt)
+		built, err := (Message{To: to, Subject: subject, Text: text, Account: account, Date: sentAt}).Build()
+		if err != nil {
+			t.Fatal(err)
+		}
+		fixed := bytes.Replace(legacy, []byte("MIME-Version: 1.0\r\n\r\nContent-Type:"), []byte("MIME-Version: 1.0\r\nContent-Type:"), 1)
+		if bytes.Equal(legacy, fixed) {
+			t.Fatal("legacy fixture did not contain the premature header break")
+		}
+		if !bytes.Equal(built.MIME, fixed) {
+			t.Fatalf("plain text structure changed beyond the header break\nlegacy:\n%s\nfixed:\n%s\ngot:\n%s", legacy, fixed, built.MIME)
+		}
+		assertPlainBody(t, built.MIME, text)
+	}
+}
+
+func assertPlainBody(t *testing.T, raw []byte, text string) {
+	t.Helper()
+	parsed, err := mail.ReadMessage(bytes.NewReader(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parsed.Header.Get("Content-Type") != "text/plain; charset=UTF-8" {
+		t.Fatalf("content type %q", parsed.Header.Get("Content-Type"))
+	}
+	if parsed.Header.Get("Content-Transfer-Encoding") != "quoted-printable" {
+		t.Fatalf("encoding %q", parsed.Header.Get("Content-Transfer-Encoding"))
+	}
+	body, err := io.ReadAll(parsed.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bodyHasHeaderLine(body) {
+		t.Fatalf("body still contains header lines:\n%s", body)
+	}
+	if normalizeNewlines(decodeQuotedPrintable(t, body)) != normalizeNewlines(text) {
+		t.Fatalf("body %q", body)
+	}
+}
+
+func TestMIMEBodiesDoNotContainHeaders(t *testing.T) {
+	dir := t.TempDir()
+	bodyFile := filepath.Join(dir, "body.txt")
+	fileText := "Hello from a body file\nSecond line\n"
+	if err := os.WriteFile(bodyFile, []byte(fileText), 0600); err != nil {
+		t.Fatal(err)
+	}
+	fileBody, err := os.ReadFile(bodyFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	attachment := filepath.Join(dir, "notes.txt")
+	attachmentBytes := []byte("attachment bytes\n")
+	if err := os.WriteFile(attachment, attachmentBytes, 0600); err != nil {
+		t.Fatal(err)
+	}
+	sentAt := time.Date(2026, 10, 16, 8, 30, 0, 0, time.FixedZone("UTC", 0))
+	providers := []struct {
+		name   string
+		gmail  bool
+		mutate func(*Message)
+	}{
+		{name: "gmail", gmail: true},
+		{name: "smtp", mutate: func(m *Message) {
+			m.IncludeMessageID = true
+			m.OmitBccHeader = true
+			m.MessageID = "<golden.1@sunbeam.agency>"
+			m.ReplyTo = "replies@sunbeam.agency"
+		}},
+	}
+	cases := []struct {
+		name       string
+		text       string
+		html       string
+		attach     bool
+		singlePart bool
+	}{
+		{name: "body", text: "Hi there", singlePart: true},
+		{name: "body-file", text: string(fileBody), singlePart: true},
+		{name: "html", html: "<p>Hello</p>", singlePart: true},
+		{name: "body-and-html", text: "Hi there", html: "<p>Hello</p>"},
+		{name: "body-and-attachment", text: "Hi there", attach: true},
+		{name: "body-file-and-attachment", text: string(fileBody), attach: true},
+		{name: "html-and-attachment", html: "<p>Hello</p>", attach: true},
+		{name: "body-html-attachment", text: "Hi there", html: "<p>Hello</p>", attach: true},
+	}
+	for _, provider := range providers {
+		for _, tc := range cases {
+			t.Run(provider.name+"/"+tc.name, func(t *testing.T) {
+				msg := Message{
+					To: []string{"alex@example.com"}, Cc: []string{"cc@example.com"}, Bcc: []string{"hidden@example.com"},
+					Subject: "Hello", Text: tc.text, HTML: tc.html, Account: "misbah@sunbeam.agency", Date: sentAt,
+				}
+				if tc.attach {
+					msg.Attachments = []string{attachment}
+				}
+				if provider.mutate != nil {
+					provider.mutate(&msg)
+				}
+				built, err := msg.Build()
+				if err != nil {
+					t.Fatal(err)
+				}
+				raw, err := base64.RawURLEncoding.DecodeString(built.Raw)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !bytes.Equal(raw, built.MIME) {
+					t.Fatal("Raw and MIME differ")
+				}
+				parsed, err := mail.ReadMessage(bytes.NewReader(built.MIME))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if provider.gmail {
+					if parsed.Header.Get("Bcc") == "" || parsed.Header.Get("Message-Id") != "" {
+						t.Fatalf("gmail headers bcc %q message-id %q", parsed.Header.Get("Bcc"), parsed.Header.Get("Message-Id"))
+					}
+				} else if parsed.Header.Get("Bcc") != "" || parsed.Header.Get("Message-Id") != msg.MessageID {
+					t.Fatalf("smtp headers bcc %q message-id %q", parsed.Header.Get("Bcc"), parsed.Header.Get("Message-Id"))
+				}
+				assertLeafBodies(t, textproto.MIMEHeader(parsed.Header), parsed.Body, tc.text, tc.html, tc.attach, attachmentBytes)
+				media, _, err := mime.ParseMediaType(parsed.Header.Get("Content-Type"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if tc.singlePart && strings.HasPrefix(media, "multipart/") {
+					t.Fatalf("plain or html-only message is %s", media)
+				}
+				if !tc.singlePart && !strings.HasPrefix(media, "multipart/") {
+					t.Fatalf("expected multipart, got %s", media)
+				}
+			})
+		}
+	}
+}
+
+func legacyGmailPlain(to []string, subject, text, account string, date time.Time) []byte {
+	var payload bytes.Buffer
+	fmt.Fprintf(&payload, "To: %s\r\n", formatAddressList(to))
+	if account != "" {
+		fmt.Fprintf(&payload, "From: %s\r\n", (&mail.Address{Address: account}).String())
+	}
+	fmt.Fprintf(&payload, "Subject: %s\r\n", mime.QEncoding.Encode("UTF-8", subject))
+	fmt.Fprintf(&payload, "Date: %s\r\n", date.Format(time.RFC1123Z))
+	fmt.Fprint(&payload, "MIME-Version: 1.0\r\n\r\n")
+	fmt.Fprint(&payload, "Content-Type: text/plain; charset=UTF-8\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\n")
+	writer := quotedprintable.NewWriter(&payload)
+	if _, err := writer.Write([]byte(text)); err != nil {
+		panic(err)
+	}
+	if err := writer.Close(); err != nil {
+		panic(err)
+	}
+	return payload.Bytes()
+}
+
+func assertLeafBodies(t *testing.T, header textproto.MIMEHeader, body io.Reader, text, html string, wantAttachment bool, attachment []byte) {
+	t.Helper()
+	media, params, err := mime.ParseMediaType(header.Get("Content-Type"))
+	if err != nil || media == "" {
+		raw, _ := io.ReadAll(body)
+		t.Fatalf("missing content type; body starts %q", raw)
+	}
+	if strings.HasPrefix(media, "multipart/") {
+		reader := multipart.NewReader(body, params["boundary"])
+		sawText, sawHTML, sawFile := false, false, false
+		for {
+			part, err := reader.NextPart()
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			partMedia, _, err := mime.ParseMediaType(part.Header.Get("Content-Type"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.HasPrefix(partMedia, "multipart/") {
+				assertLeafBodies(t, part.Header, part, text, html, false, nil)
+				sawText = text != ""
+				sawHTML = html != ""
+				continue
+			}
+			raw, err := io.ReadAll(part)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if bodyHasHeaderLine(raw) {
+				t.Fatalf("part %s body contains header lines:\n%s", partMedia, raw)
+			}
+			disposition, _, _ := mime.ParseMediaType(part.Header.Get("Content-Disposition"))
+			if disposition == "attachment" || part.FileName() != "" {
+				sawFile = true
+				decoded, err := base64.StdEncoding.DecodeString(strings.ReplaceAll(strings.TrimSpace(string(raw)), "\r\n", ""))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if string(decoded) != string(attachment) {
+					t.Fatalf("attachment %q", decoded)
+				}
+				continue
+			}
+			switch {
+			case strings.HasPrefix(partMedia, "text/plain"):
+				sawText = true
+				if decoded := normalizeNewlines(decodeQuotedPrintable(t, raw)); decoded != normalizeNewlines(text) {
+					t.Fatalf("plain body %q", decoded)
+				}
+			case strings.HasPrefix(partMedia, "text/html"):
+				sawHTML = true
+				if decoded := normalizeNewlines(decodeQuotedPrintable(t, raw)); decoded != normalizeNewlines(html) {
+					t.Fatalf("html body %q", decoded)
+				}
+			default:
+				sawFile = true
+				decoded, err := base64.StdEncoding.DecodeString(strings.ReplaceAll(strings.TrimSpace(string(raw)), "\r\n", ""))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if string(decoded) != string(attachment) {
+					t.Fatalf("attachment %q", decoded)
+				}
+			}
+		}
+		if (text != "") != sawText || (html != "") != sawHTML || wantAttachment != sawFile {
+			t.Fatalf("parts text=%v html=%v file=%v", sawText, sawHTML, sawFile)
+		}
+		return
+	}
+	raw, err := io.ReadAll(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bodyHasHeaderLine(raw) {
+		t.Fatalf("body contains header lines:\n%s", raw)
+	}
+	decoded := normalizeNewlines(decodeQuotedPrintable(t, raw))
+	switch {
+	case strings.HasPrefix(media, "text/html"):
+		if decoded != normalizeNewlines(html) {
+			t.Fatalf("html body %q", decoded)
+		}
+	default:
+		if decoded != normalizeNewlines(text) {
+			t.Fatalf("plain body %q", decoded)
+		}
+	}
+}
+
+func normalizeNewlines(value string) string {
+	value = strings.ReplaceAll(value, "\r\n", "\n")
+	return strings.ReplaceAll(value, "\r", "\n")
+}
+
+func decodeQuotedPrintable(t *testing.T, raw []byte) string {
+	t.Helper()
+	decoded, err := io.ReadAll(quotedprintable.NewReader(bytes.NewReader(raw)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(decoded)
+}
+
+func bodyHasHeaderLine(raw []byte) bool {
+	for _, line := range strings.Split(string(raw), "\n") {
+		line = strings.TrimRight(line, "\r")
+		lower := strings.ToLower(strings.TrimSpace(line))
+		if strings.HasPrefix(lower, "content-type:") || strings.HasPrefix(lower, "content-transfer-encoding:") || strings.HasPrefix(lower, "content-disposition:") || strings.HasPrefix(lower, "mime-version:") {
+			return true
+		}
+	}
+	return false
 }
 
 func TestBuildRejectsBadInputs(t *testing.T) {

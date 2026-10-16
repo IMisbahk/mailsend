@@ -3,9 +3,12 @@ package cli
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/mail"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -300,6 +303,112 @@ func TestGmailSenderStillPostsEncodedRaw(t *testing.T) {
 	}
 	if sender.Provider() != auth.ProviderGmail || sender.FromAddress() != "misbah@sunbeam.agency" {
 		t.Fatalf("gmail sender identity %s %s", sender.Provider(), sender.FromAddress())
+	}
+}
+
+func TestGmailDryRunPlainRFC822(t *testing.T) {
+	dir := useTestConfig(t)
+	manifest := []byte("{\n  \"default\": \"sunbeam\",\n  \"accounts\": [\"sunbeam\"],\n  \"emails\": {\n    \"sunbeam\": \"misbah@sunbeam.agency\"\n  }\n}\n")
+	if err := os.WriteFile(filepath.Join(dir, "accounts.json"), manifest, 0600); err != nil {
+		t.Fatal(err)
+	}
+	built, err := composeSendMessage("sunbeam", mailmsg.Message{To: []string{"alex@example.com"}, Subject: "Hello", Text: "Hi from mailsend"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertPlainRFC822(t, built.MIME, "Hi from mailsend")
+	t.Logf("RFC822:\n%s", built.MIME)
+	if strings.Contains(string(built.MIME), "\r\n\r\nContent-Type:") {
+		t.Fatalf("content headers are outside the header block:\n%s", built.MIME)
+	}
+	stdout, stderr, err := executeCLI(t, "", "send", "--account", "sunbeam", "--to", "alex@example.com", "--subject", "Hello", "--body", "Hi from mailsend", "--dry-run")
+	if err != nil {
+		t.Fatalf("dry-run error %v stderr %s", err, stderr)
+	}
+	if strings.Contains(stdout, "Sent to") || strings.Contains(stderr, "Sent to") {
+		t.Fatalf("dry-run sent mail stdout=%q stderr=%q", stdout, stderr)
+	}
+	db, err := store.Open(filepath.Join(dir, "mailsend.sqlite3"))
+	if err == nil {
+		defer db.Close()
+		history, histErr := db.History("", 10, "sunbeam")
+		if histErr != nil {
+			t.Fatal(histErr)
+		}
+		if len(history) != 0 {
+			t.Fatalf("dry-run wrote history %#v", history)
+		}
+	}
+}
+
+func TestPlainBodyFileSendKeepsHeadersOutOfTheBody(t *testing.T) {
+	useTestConfig(t)
+	server, err := smtpfake.Listen(smtpfake.Options{Mode: smtpfake.ModeNone, Username: "misbah@sunbeam.agency", Password: "secret"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close()
+	writeCA(t, server.Certificate)
+	if _, err = auth.SaveSMTPAccount("agency", auth.ProviderConfig{Host: server.Host(), Port: server.Port(), TLS: "none", Username: "misbah@sunbeam.agency", From: "misbah@sunbeam.agency"}, "secret"); err != nil {
+		t.Fatal(err)
+	}
+	bodyPath := filepath.Join(t.TempDir(), "note.txt")
+	if err = os.WriteFile(bodyPath, []byte("Hello from a body file\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err = executeCLI(t, "", "send", "--account", "agency", "--to", "alex@example.com", "--subject", "Hello", "--body-file", bodyPath); err != nil {
+		t.Fatal(err)
+	}
+	submission, err := server.WaitSubmission(time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertPlainRFC822(t, submission.Data, "Hello from a body file")
+
+	var posted string
+	gmail := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]string
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Error(err)
+		}
+		posted = body["raw"]
+		_, _ = w.Write([]byte(`{"id":"gmail-1"}`))
+	}))
+	defer gmail.Close()
+	built, err := (mailmsg.Message{To: []string{"alex@example.com"}, Subject: "Hello", Text: "Hello from a body file\n", Account: "misbah@sunbeam.agency"}).Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sender := gmailSender{client: &auth.Client{HTTP: gmail.Client(), BaseURL: gmail.URL, Account: auth.Account{Email: "misbah@sunbeam.agency"}}}
+	if _, _, err = sender.Send(context.Background(), built); err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := base64.RawURLEncoding.DecodeString(posted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertPlainRFC822(t, decoded, "Hello from a body file")
+}
+
+func assertPlainRFC822(t *testing.T, raw []byte, snippet string) {
+	t.Helper()
+	parsed, err := mail.ReadMessage(bytes.NewReader(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(parsed.Header.Get("Content-Type"), "text/plain") {
+		t.Fatalf("content type %q\n%s", parsed.Header.Get("Content-Type"), raw)
+	}
+	body, err := io.ReadAll(parsed.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(body)
+	if strings.Contains(text, "Content-Type:") || strings.Contains(text, "Content-Transfer-Encoding:") {
+		t.Fatalf("header lines leaked into the body:\n%s", text)
+	}
+	if !strings.Contains(text, snippet) {
+		t.Fatalf("body %q", text)
 	}
 }
 

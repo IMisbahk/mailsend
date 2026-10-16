@@ -176,7 +176,8 @@ func (m Message) Build() (BuiltMessage, error) {
 		payload.Write(body.Bytes())
 	} else {
 		writeHeaders(&payload)
-		fmt.Fprint(&payload, "\r\n")
+		// writeAlternative emits Content-Type and then the single blank line.
+		// A blank line before those headers makes them the start of the body.
 		if err := writeAlternative(&payload, m); err != nil {
 			return BuiltMessage{}, err
 		}
@@ -261,13 +262,8 @@ func writeBodyParts(w *multipart.Writer, m Message) error {
 			return fmt.Errorf("cannot read attachment %q: %w", path, err)
 		}
 		name := filepath.Base(path)
-		media := mime.TypeByExtension(filepath.Ext(name))
-		if media == "" {
-			media = "application/octet-stream"
-		}
-		params := map[string]string{"name": name}
 		h := textproto.MIMEHeader{}
-		h.Set("Content-Type", mime.FormatMediaType(media, params))
+		h.Set("Content-Type", attachmentContentType(name))
 		h.Set("Content-Transfer-Encoding", "base64")
 		h.Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": name}))
 		part, err := w.CreatePart(h)
@@ -311,10 +307,29 @@ func (l *lineWriter) Write(p []byte) (int, error) {
 	return n, nil
 }
 
+func attachmentContentType(name string) string {
+	mediaType, params, err := mime.ParseMediaType(mime.TypeByExtension(filepath.Ext(name)))
+	if err != nil || mediaType == "" {
+		mediaType = "application/octet-stream"
+		params = map[string]string{}
+	}
+	if params == nil {
+		params = map[string]string{}
+	}
+	params["name"] = name
+	formatted := mime.FormatMediaType(mediaType, params)
+	if formatted == "" {
+		return mime.FormatMediaType("application/octet-stream", map[string]string{"name": name})
+	}
+	return formatted
+}
+
 func writeAlternative(w io.Writer, m Message) error {
 	if m.Text != "" && m.HTML != "" {
 		mw := multipart.NewWriter(w)
-		fmt.Fprintf(w, "Content-Type: multipart/alternative; boundary=%q\r\n\r\n", mw.Boundary())
+		if _, err := fmt.Fprintf(w, "Content-Type: multipart/alternative; boundary=%q\r\n\r\n", mw.Boundary()); err != nil {
+			return err
+		}
 		if err := writeTextPart(mw, "text/plain; charset=UTF-8", m.Text); err != nil {
 			return err
 		}

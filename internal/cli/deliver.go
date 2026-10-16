@@ -85,6 +85,20 @@ func openSender(ctx context.Context, name string) (mailSender, error) {
 	}
 }
 
+func composeSendMessage(name string, msg mailmsg.Message) (mailmsg.BuiltMessage, error) {
+	if cfg, err := auth.LookupProvider(name); err == nil && cfg.Provider == auth.ProviderSMTP && cfg.From != "" {
+		msg.Account = cfg.From
+		if msg.ReplyTo == "" {
+			msg.ReplyTo = cfg.ReplyTo
+		}
+		msg.IncludeMessageID = true
+		msg.OmitBccHeader = true
+	} else if email := auth.Email(name); email != "" {
+		msg.Account = email
+	}
+	return msg.Build()
+}
+
 func applySenderIdentity(msg *mailmsg.Message, sender mailSender) error {
 	from := strings.TrimSpace(sender.FromAddress())
 	if from == "" {

@@ -214,17 +214,7 @@ func sendCmd() *cobra.Command {
 		name := selectedAccount()
 		msg := mailmsg.Message{To: allTo, Cc: allCC, Bcc: allBCC, Subject: subject, Text: text, HTML: html, Attachments: attachments, ReplyTo: replyTo, FromName: fromName}
 		if dry {
-			if cfg, err := auth.LookupProvider(name); err == nil && cfg.Provider == auth.ProviderSMTP && cfg.From != "" {
-				msg.Account = cfg.From
-				if msg.ReplyTo == "" {
-					msg.ReplyTo = cfg.ReplyTo
-				}
-				msg.IncludeMessageID = true
-				msg.OmitBccHeader = true
-			} else if email := auth.Email(name); email != "" {
-				msg.Account = email
-			}
-			built, e := msg.Build()
+			built, e := composeSendMessage(name, msg)
 			if e != nil {
 				return e
 			}
