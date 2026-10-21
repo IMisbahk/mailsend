@@ -26,6 +26,7 @@ import (
 type options struct {
 	account string
 	json    bool
+	debug   bool
 }
 
 var global options
@@ -70,6 +71,11 @@ func newRoot() *cobra.Command {
 	global = options{}
 	root := &cobra.Command{Use: "mailsend", Short: "Send email from your terminal", Long: "mailsend is a local email client. Gmail accounts send through the Gmail API with OAuth. SMTP accounts send through the server configured for that account. Tokens and SMTP passwords stay in the operating system keychain, and send history stays in a local SQLite database.", SilenceUsage: true, SilenceErrors: true}
 	root.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
+		if global.debug {
+			auth.SetDebug(commandStderr)
+		} else {
+			auth.SetDebug(nil)
+		}
 		if global.account != "" {
 			return auth.ValidateAccountName(global.account)
 		}
@@ -77,6 +83,7 @@ func newRoot() *cobra.Command {
 	}
 	root.PersistentFlags().StringVar(&global.account, "account", "", "Named account (default: the current default account)")
 	root.PersistentFlags().BoolVar(&global.json, "json", false, "Write machine-readable JSON output")
+	root.PersistentFlags().BoolVar(&global.debug, "debug", false, "Write a step trace to stderr")
 	root.AddCommand(loginCmd(), logoutCmd(), accountCmd(), sendCmd(), bulkCmd(), quotaCmd(), historyCmd(), templateCmd(), versionCmd(), queueCmd(), dispatchCmd(), sentCheckCmd())
 	return root
 }

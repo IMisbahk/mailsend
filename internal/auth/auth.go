@@ -17,7 +17,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/zalando/go-keyring"
 	"golang.org/x/oauth2"
 )
 
@@ -155,7 +154,7 @@ func ValidateAccountName(name string) error {
 }
 func Load(name string) (*Client, error) {
 	name = accountName(name)
-	raw, e := keyring.Get(service, tokenKey(name))
+	raw, e := secretGet(tokenKey(name))
 	if e != nil {
 		return nil, fmt.Errorf("account %q is not logged in; run mailsend login --account %s", name, name)
 	}
@@ -167,8 +166,12 @@ func Load(name string) (*Client, error) {
 	if e != nil {
 		return nil, e
 	}
-	httpClient := cfg.Client(context.Background(), &tok)
-	return &Client{Account: Account{Name: name, Email: Email(name), Token: &tok, Config: cfg}, HTTP: httpClient}, nil
+	expiry := "unset"
+	if !tok.Expiry.IsZero() {
+		expiry = tok.Expiry.UTC().Format(time.RFC3339)
+	}
+	Debugf("oauth: loaded token for %s, expiry %s, valid %v", name, expiry, tok.Valid())
+	return &Client{Account: Account{Name: name, Email: Email(name), Token: &tok, Config: cfg}, HTTP: oauthHTTPClient(cfg, &tok)}, nil
 }
 func (c *Client) Profile(ctx context.Context) (Profile, error) {
 	var p Profile
@@ -365,6 +368,7 @@ func Login(ctx context.Context, name string, output io.Writer) (string, error) {
 	defer server.Shutdown(context.Background())
 	authURL := cfg.AuthCodeURL(state, oauth2.AccessTypeOffline, oauth2.SetAuthURLParam("prompt", "consent"), oauth2.S256ChallengeOption(verifier))
 	fmt.Fprintf(output, "Opening Google authorization in your browser.\nIf it does not open, visit:\n%s\n", authURL)
+	Debugf("login: opening a browser; this is the only command that does")
 	_ = openBrowser(authURL)
 	select {
 	case cb := <-ch:
@@ -379,14 +383,14 @@ func Login(ctx context.Context, name string, output io.Writer) (string, error) {
 			return "", fmt.Errorf("Google did not return an offline refresh token; run login again and approve offline access")
 		}
 		raw, _ := json.Marshal(tok)
-		if e = keyring.Set(service, tokenKey(name), string(raw)); e != nil {
+		if e = secretPut(tokenKey(name), string(raw)); e != nil {
 			return "", fmt.Errorf("secure token storage failed in the OS keychain: %w; no credentials were written to disk", e)
 		}
 		if e = addAccount(name); e != nil {
-			_ = keyring.Delete(service, tokenKey(name))
+			_ = secretRemove(tokenKey(name))
 			return "", e
 		}
-		client := &Client{Account: Account{Name: name, Token: tok, Config: cfg}, HTTP: cfg.Client(context.Background(), tok)}
+		client := &Client{Account: Account{Name: name, Token: tok, Config: cfg}, HTTP: oauthHTTPClient(cfg, tok)}
 		p, e := client.Profile(ctx)
 		if e != nil {
 			return "", fmt.Errorf("login succeeded but Google account lookup failed: %w", e)
@@ -529,7 +533,7 @@ func Logout(name string) error {
 }
 func DefaultAccount() string { m, _ := readManifest(); return m.Default }
 func HasToken(name string) bool {
-	_, e := keyring.Get(service, tokenKey(accountName(name)))
+	_, e := secretGet(tokenKey(accountName(name)))
 	return e == nil
 }
 func SetDefault(name string) error {

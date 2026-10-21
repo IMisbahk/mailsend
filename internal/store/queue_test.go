@@ -51,6 +51,13 @@ func TestQueueClaimIsDurableAndCannotBeClaimedTwice(t *testing.T) {
 	if err != nil || sent != 1 {
 		t.Fatalf("sent count %d %v", sent, err)
 	}
+	latest, ok, err := reopened.LatestSentAt("sunbeam")
+	if err != nil || !ok || !latest.Equal(when.Add(time.Second)) {
+		t.Fatalf("latest %s ok %v err %v", latest, ok, err)
+	}
+	if _, ok, err = reopened.LatestSentAt("other"); err != nil || ok {
+		t.Fatalf("empty account ok %v err %v", ok, err)
+	}
 	finished, err := reopened.QueueItem(again.ID)
 	if err != nil || finished.Status != "sent" || finished.MessageID != "gmail-1" {
 		t.Fatalf("finished %#v %v", finished, err)

@@ -11,6 +11,10 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// sentCheckTimeout is the whole-command budget. Any failure, including a
+// missing scope or a stalled keychain or network call, returns before this.
+var sentCheckTimeout = 20 * time.Second
+
 func sentCheckCmd() *cobra.Command {
 	var to, subject string
 	since := spanValue(30 * 24 * time.Hour)
@@ -27,21 +31,23 @@ Existing send-only tokens keep working for mailsend send. This command does not.
 			if to == "" {
 				return &statusExit{code: 2, err: fmt.Errorf("--to is required")}
 			}
+			ctx, cancel := context.WithTimeout(cmd.Context(), sentCheckTimeout)
+			defer cancel()
 			account := selectedAccount()
-			client, err := openGmailClient(cmd.Context(), account)
+			auth.Debugf("sent-check: account %s to %s since %s", account, to, since.Duration())
+			auth.Debugf("sent-check: opening Gmail client")
+			client, err := openGmailClient(ctx, account)
 			if err != nil {
-				return &statusExit{code: 2, err: err}
+				return &statusExit{code: 2, err: sentCheckFailure(err)}
 			}
 			var sinceAt time.Time
 			if since.Duration() > 0 {
 				sinceAt = time.Now().Add(-since.Duration())
 			}
-			listed, err := client.ListSent(cmd.Context(), to, subject, sinceAt)
+			auth.Debugf("sent-check: searching Gmail Sent")
+			listed, err := client.ListSent(ctx, to, subject, sinceAt)
 			if err != nil {
-				if errors.Is(err, auth.ErrScopeMissing) {
-					return &statusExit{code: 2, err: auth.ErrScopeMissing}
-				}
-				return &statusExit{code: 2, err: err}
+				return &statusExit{code: 2, err: sentCheckFailure(err)}
 			}
 			messages := listed.Messages
 			if messages == nil {
@@ -86,6 +92,19 @@ Existing send-only tokens keep working for mailsend send. This command does not.
 	cmd.Flags().StringVar(&subject, "subject", "", "Only messages with this subject")
 	cmd.Flags().Var(&since, "since", "How far back to search (30d, 12h); 0s searches without a time limit")
 	return cmd
+}
+
+func sentCheckFailure(err error) error {
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, auth.ErrScopeMissing) {
+		return auth.ErrScopeMissing
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return fmt.Errorf("sent-check timed out after %s", sentCheckTimeout)
+	}
+	return err
 }
 
 var openGmailClient = func(ctx context.Context, name string) (*auth.Client, error) {

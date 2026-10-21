@@ -350,7 +350,8 @@ func dispatchCmd() *cobra.Command {
 	var dailyCap int
 	var timezoneName, hookCommand, afterSend, sentCheck string
 	var holdPaths, holdSteps []string
-	var once, requireSentCheck bool
+	var once, requireSentCheck, gapFromHistory bool
+	var lockFile string
 	cmd := &cobra.Command{
 		Use:   "dispatch",
 		Short: "Send queued email for one account",
@@ -362,10 +363,12 @@ Before the provider is called the email is stored as sending. It becomes sent on
 
 --require-sent-check looks in Gmail Sent for that recipient before sending. A match within --sent-within (default 7 days) blocks that email. A scope or search error stops the dispatcher without sending. Tokens from before gmail.readonly keep sending when this flag is off; re-run mailsend login to grant the read scope.
 
-Hold files that exist pause the dispatcher. A daily cap counts every sent row this installation has for the account, including mail sent outside the queue, and waits for the next midnight in --timezone.`,
+Hold files that exist pause the dispatcher. A daily cap counts every sent row this installation has for the account, including mail sent outside the queue, and waits for the next midnight in --timezone.
+
+--lock-file holds an exclusive flock around each item's pre-send hook, send, and after-send hook, then releases it between items and while waiting. Another sender using that file waits its turn. --gap-from-history also spaces from the newest sent history row for the account.`,
 		Example: `  mailsend --account sunbeam dispatch --daily-cap 95 --timezone Asia/Kolkata --interval 5m \
     --hold /var/lib/outbound/SEND_HOLD \
-    --hold-step fu-d3,fu-d7,ooo=/var/lib/outbound/FOLLOWUP_HOLD \
+    --hold-step fu-d3,fu-d7,ooo,fu=/var/lib/outbound/FOLLOWUP_HOLD \
     --hook ./scripts/mailsend-presend-hook --after-send ./scripts/mailsend-presend-hook`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			account := selectedAccount()
@@ -411,6 +414,7 @@ Hold files that exist pause the dispatcher. A daily cap counts every sent row th
 				Holds: holds, Hook: hookCommand, AfterSend: afterSend, Once: once, Poll: poll,
 				Sender: sender, Probe: probeFor(sender, sentCheck), SentLister: sentListerFor(sender),
 				RequireSentCheck: requireSentCheck, SentWithin: sentWithin.Duration(), LockPath: lockPath,
+				ItemLockPath: lockFile, GapFromHistory: gapFromHistory,
 				Logf: func(format string, args ...any) {
 					fmt.Fprintf(commandStderr, format+"\n", args...)
 				},
@@ -442,6 +446,8 @@ Hold files that exist pause the dispatcher. A daily cap counts every sent row th
 	cmd.Flags().DurationVar(&poll, "poll", 15*time.Second, "How often to recheck holds, the cap, and the clock while waiting")
 	cmd.Flags().BoolVar(&requireSentCheck, "require-sent-check", false, "Block a recipient already present in Gmail Sent, and stop instead of sending when the check errors")
 	cmd.Flags().Var(&sentWithin, "sent-within", "How far back --require-sent-check looks in Gmail Sent (default 7d)")
+	cmd.Flags().StringVar(&lockFile, "lock-file", "", "Exclusive flock held around each item's pre-send hook, send, and after-send hook; released between items and while waiting")
+	cmd.Flags().BoolVar(&gapFromHistory, "gap-from-history", false, "Also space from the newest sent history row for this account")
 	return cmd
 }
 
