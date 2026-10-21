@@ -54,6 +54,20 @@ type SentProbe interface {
 	ProbeSent(ctx context.Context, query SentQuery) (SentEvidence, error)
 }
 
+// SentHit is one message already in the provider's Sent mailbox.
+type SentHit struct {
+	ID      string
+	Date    time.Time
+	To      string
+	Subject string
+}
+
+// SentLister lists Sent messages to one recipient since a time.
+// An error means the check could not decide, including a token that cannot read Sent.
+type SentLister interface {
+	ListSent(ctx context.Context, email string, since time.Time) ([]SentHit, error)
+}
+
 // RunCommandHook executes command with the payload on stdin.
 // Exit code 0 allows the send. Any other exit code is returned to the caller.
 func RunCommandHook(ctx context.Context, command string, payload HookPayload) (int, string, error) {

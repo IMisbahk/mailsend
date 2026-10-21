@@ -56,7 +56,9 @@ chmod 600 "$HOME/Library/Application Support/mailsend/client_secret.json"
 
 On Linux, use `install -m 600 ~/Downloads/client_secret_*.json "${XDG_CONFIG_HOME:-$HOME/.config}/mailsend/client_secret.json"` after creating the `mailsend` config directory. On Windows, copy the downloaded JSON to the path above. You can keep the file elsewhere and point to it with `MAILSEND_OAUTH_CLIENT_FILE=/path/to/client_secret.json`.
 
-The CLI requests `gmail.send` plus OpenID's basic `openid` and `email` identity scopes. Google's [`users.messages.send` method](https://developers.google.com/workspace/gmail/api/reference/rest/v1/users.messages/send) accepts the send-only scope; OpenID is used to display which account was authorized. The CLI does not request mailbox read access or Gmail settings access, so alias listings are unavailable. The From address is the authenticated account and cannot be set to an arbitrary address. OAuth uses Google's [installed-app loopback flow](https://developers.google.com/identity/protocols/oauth2/native-app) with PKCE.
+The CLI requests `gmail.send`, `gmail.readonly`, and OpenID's basic `openid` and `email` identity scopes. Google's [`users.messages.send` method](https://developers.google.com/workspace/gmail/api/reference/rest/v1/users.messages/send) accepts the send-only scope. [`users.messages.list`](https://developers.google.com/workspace/gmail/api/reference/rest/v1/users.messages/list) documents that the `q` search parameter cannot be used with `gmail.metadata`, so Sent search uses `gmail.readonly`, which is the narrowest scope that allows `in:sent to:<address>`. `gmail.metadata` is not requested, because a token that includes it is held to the metadata restriction even when a broader scope is present. OpenID is used to display which account was authorized. The CLI does not request Gmail settings access, so alias listings are unavailable. The From address is the authenticated account and cannot be set to an arbitrary address. OAuth uses Google's [installed-app loopback flow](https://developers.google.com/identity/protocols/oauth2/native-app) with PKCE.
+
+A token saved by an older login, which has only `gmail.send`, still sends. `sent-check` and `dispatch --require-sent-check` need the read scope. Run `mailsend login` again for that account and approve the additional access. Until then those checks fail with `scope missing, re-run mailsend login` and do not treat the mailbox as empty.
 
 Then:
 
@@ -313,7 +315,16 @@ Each email is stored as `sending` before the provider is called, and becomes `se
 - the check proves it was not accepted: it is tried again, up to three attempts
 - the check cannot decide: the email is `parked` and is not retried
 
-Gmail login for this CLI requests send access only, so a Gmail Sent search often cannot confirm a crashed send. Parked mail stays parked until someone checks the mailbox and runs `queue resolve`. `--sent-check` is an optional command that receives the same kind of JSON and prints `{"found": true, "message_id": "..."}` or `{"found": false}`. Exit 2 means it could not tell.
+After `mailsend login` grants `gmail.readonly`, a crashed `sending` row is reconciled against live Gmail Sent for that recipient and subject. A token that is still send-only cannot do that search. The row is parked with `scope missing, re-run mailsend login` and is not retried. Other queued mail still sends. The dispatch flag `--sent-check` is a different, optional external program for that same reconcile step. It receives JSON on stdin and prints `{"found": true, "message_id": "..."}` or `{"found": false}`. Exit 2 means it could not tell.
+
+`dispatch --require-sent-check` is a separate gate that runs before each send. It asks Gmail Sent whether this recipient already has a message within `--sent-within` (default 7 days). A match blocks that email and the batch continues. A search error, including a missing scope, stops the dispatcher and leaves the email pending, so nothing is sent on an unknown answer. Without the flag, an old send-only token keeps sending.
+
+```sh
+mailsend sent-check --account sunbeam --to ada@example.com --since 30d --json
+mailsend --account sunbeam dispatch --require-sent-check --sent-within 7d --interval 5m
+```
+
+`sent-check` prints matching messages (`id`, `date`, `to`, `subject`). Exit 0 means none. Exit 3 means at least one. Exit 2 means the search failed or the scope is missing. `--since` defaults to 30 days. `--subject` is optional. The pre-send gate matches on recipient and time only.
 
 ```sh
 mailsend queue list
@@ -409,7 +420,7 @@ A slot folder that used to run its own sender can become one batch, and one `dis
 - The SQLite database, config directory, account metadata, and saved templates are created with owner-only permissions. The local database includes rendered message content so interrupted jobs can resume exactly; protect the OS user account and do not share the config directory.
 - OAuth client JSON is read from the configured path and is ignored by git patterns. Do not commit it. An existing `accounts.json` without a `providers` object remains valid.
 - Bulk attempts that may have reached the provider are marked `uncertain` and never automatically retried. Retryable failures are HTTP 429 / Gmail user rate-limit responses and SMTP 4xx replies, using exponential backoff (and `Retry-After` when Gmail supplies it). Transport loss, a lost SMTP reply after DATA, and permanent 5xx replies are not retried.
-- Neither provider gives this CLI a safe way to determine whether an ambiguous timed-out send was delivered. Check the mailbox's Sent folder before manually retrying an uncertain row.
+- Bulk and one-off sends still cannot prove an ambiguous timed-out delivery. Check Sent before retrying an `uncertain` row. Queue dispatch can search Gmail Sent when the token has `gmail.readonly`, and `mailsend sent-check` does the same lookup on demand.
 
 ## Development and tests
 
