@@ -92,6 +92,9 @@ type Dispatcher struct {
 	Clock             Clock
 	Sender            Sender
 	Probe             SentProbe
+	SentLister        SentLister
+	RequireSentCheck  bool
+	SentWithin        time.Duration
 	HookRunner        HookRunner
 	Logf              func(string, ...any)
 	LockPath          string
@@ -223,6 +226,12 @@ func (d *Dispatcher) deliver(ctx context.Context, send store.QueueSend) (bool, R
 		result, done, err := d.wait(ctx, until, reason)
 		return false, result, done, err
 	}
+	if d.RequireSentCheck {
+		blocked, result, done, err := d.gateSent(ctx, send)
+		if done || err != nil || blocked {
+			return blocked, result, done, err
+		}
+	}
 	if command := d.hookCommand(send.Batch); command != "" {
 		code, reason, hookErr := d.HookRunner(ctx, command, payloadFor(send))
 		if hookErr != nil && ctx.Err() != nil {
@@ -311,6 +320,39 @@ func (d *Dispatcher) deliver(ctx context.Context, send store.QueueSend) (bool, R
 	}
 	d.failedThisRun++
 	d.logf("failed %s: %s", send.Item.Email, sendErr)
+	return true, Result{}, false, nil
+}
+
+func (d *Dispatcher) gateSent(ctx context.Context, send store.QueueSend) (bool, Result, bool, error) {
+	window := d.SentWithin
+	if window <= 0 {
+		window = 7 * 24 * time.Hour
+	}
+	if d.SentLister == nil {
+		return false, Result{}, true, fmt.Errorf("sent check requires a Gmail account with gmail.readonly; %w", auth.ErrScopeMissing)
+	}
+	since := d.now().Add(-window)
+	hits, err := d.SentLister.ListSent(ctx, send.Item.Email, since)
+	if err != nil {
+		if ctx.Err() != nil {
+			result, stopErr := d.stopped(ctx.Err())
+			return false, result, true, stopErr
+		}
+		if errors.Is(err, auth.ErrScopeMissing) {
+			return false, Result{}, true, auth.ErrScopeMissing
+		}
+		return false, Result{}, true, fmt.Errorf("sent check failed for %s: %w", send.Item.Email, err)
+	}
+	if len(hits) == 0 {
+		return false, Result{}, false, nil
+	}
+	hit := hits[0]
+	reason := fmt.Sprintf("Gmail Sent already has a message to %s within %s (id %s, subject %s)", send.Item.Email, window, hit.ID, hit.Subject)
+	if err = d.DB.SetQueueItemStatus(send.Item.ID, "blocked", reason, d.now()); err != nil {
+		return false, Result{}, true, err
+	}
+	d.blockedThisRun++
+	d.logf("blocked %s: %s", send.Item.Email, reason)
 	return true, Result{}, false, nil
 }
 

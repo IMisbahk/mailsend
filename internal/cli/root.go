@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -36,9 +37,35 @@ func Execute() int {
 	if err == nil {
 		return 0
 	}
+	var status *statusExit
+	if errors.As(err, &status) {
+		if status.err != nil {
+			printCommandError(status.err)
+		}
+		if status.code <= 0 {
+			return 1
+		}
+		return status.code
+	}
 	printCommandError(err)
 	return 1
 }
+
+// statusExit is a command result whose process status is not 1.
+// sent-check uses 3 when Sent matches and 2 when the check cannot be trusted.
+type statusExit struct {
+	code int
+	err  error
+}
+
+func (s *statusExit) Error() string {
+	if s == nil || s.err == nil {
+		return ""
+	}
+	return s.err.Error()
+}
+
+func (s *statusExit) Unwrap() error { return s.err }
 func newRoot() *cobra.Command {
 	global = options{}
 	root := &cobra.Command{Use: "mailsend", Short: "Send email from your terminal", Long: "mailsend is a local email client. Gmail accounts send through the Gmail API with OAuth. SMTP accounts send through the server configured for that account. Tokens and SMTP passwords stay in the operating system keychain, and send history stays in a local SQLite database.", SilenceUsage: true, SilenceErrors: true}
@@ -50,7 +77,7 @@ func newRoot() *cobra.Command {
 	}
 	root.PersistentFlags().StringVar(&global.account, "account", "", "Named account (default: the current default account)")
 	root.PersistentFlags().BoolVar(&global.json, "json", false, "Write machine-readable JSON output")
-	root.AddCommand(loginCmd(), logoutCmd(), accountCmd(), sendCmd(), bulkCmd(), quotaCmd(), historyCmd(), templateCmd(), versionCmd(), queueCmd(), dispatchCmd())
+	root.AddCommand(loginCmd(), logoutCmd(), accountCmd(), sendCmd(), bulkCmd(), quotaCmd(), historyCmd(), templateCmd(), versionCmd(), queueCmd(), dispatchCmd(), sentCheckCmd())
 	return root
 }
 

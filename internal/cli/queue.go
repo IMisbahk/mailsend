@@ -346,10 +346,11 @@ func queueResolveCmd() *cobra.Command {
 
 func dispatchCmd() *cobra.Command {
 	var interval, poll time.Duration
+	sentWithin := spanValue(7 * 24 * time.Hour)
 	var dailyCap int
 	var timezoneName, hookCommand, afterSend, sentCheck string
 	var holdPaths, holdSteps []string
-	var once bool
+	var once, requireSentCheck bool
 	cmd := &cobra.Command{
 		Use:   "dispatch",
 		Short: "Send queued email for one account",
@@ -357,7 +358,9 @@ func dispatchCmd() *cobra.Command {
 
 A scheduled time that has already passed is sent as soon as the gap allows. Later emails keep that same spacing. They are not skipped and they are not sent in a burst.
 
-Before the provider is called the email is stored as sending. It becomes sent only when the provider returns a message id. After a crash, an open sending row is checked against history and, when configured, Gmail Sent or --sent-check. If it cannot be confirmed, it is parked for mailsend queue resolve.
+Before the provider is called the email is stored as sending. It becomes sent only when the provider returns a message id. After a crash, an open sending row is checked against history and, when the token can read Sent, against Gmail Sent or --sent-check. If it cannot be confirmed, it is parked for mailsend queue resolve.
+
+--require-sent-check looks in Gmail Sent for that recipient before sending. A match within --sent-within (default 7 days) blocks that email. A scope or search error stops the dispatcher without sending. Tokens from before gmail.readonly keep sending when this flag is off; re-run mailsend login to grant the read scope.
 
 Hold files that exist pause the dispatcher. A daily cap counts every sent row this installation has for the account, including mail sent outside the queue, and waits for the next midnight in --timezone.`,
 		Example: `  mailsend --account sunbeam dispatch --daily-cap 95 --timezone Asia/Kolkata --interval 5m \
@@ -406,7 +409,8 @@ Hold files that exist pause the dispatcher. A daily cap counts every sent row th
 			runner := &dispatch.Dispatcher{
 				DB: db, Account: account, Interval: interval, DailyCap: dailyCap, Timezone: loc,
 				Holds: holds, Hook: hookCommand, AfterSend: afterSend, Once: once, Poll: poll,
-				Sender: sender, Probe: probeFor(sender, sentCheck), LockPath: lockPath,
+				Sender: sender, Probe: probeFor(sender, sentCheck), SentLister: sentListerFor(sender),
+				RequireSentCheck: requireSentCheck, SentWithin: sentWithin.Duration(), LockPath: lockPath,
 				Logf: func(format string, args ...any) {
 					fmt.Fprintf(commandStderr, format+"\n", args...)
 				},
@@ -436,6 +440,8 @@ Hold files that exist pause the dispatcher. A daily cap counts every sent row th
 	cmd.Flags().StringVar(&sentCheck, "sent-check", "", "Command that confirms or rules out a crashed send; exit 2 means unverified")
 	cmd.Flags().BoolVar(&once, "once", false, "Send at most one due email, then exit")
 	cmd.Flags().DurationVar(&poll, "poll", 15*time.Second, "How often to recheck holds, the cap, and the clock while waiting")
+	cmd.Flags().BoolVar(&requireSentCheck, "require-sent-check", false, "Block a recipient already present in Gmail Sent, and stop instead of sending when the check errors")
+	cmd.Flags().Var(&sentWithin, "sent-within", "How far back --require-sent-check looks in Gmail Sent (default 7d)")
 	return cmd
 }
 
@@ -559,6 +565,30 @@ type gmailProbe struct {
 func (g gmailProbe) ProbeSent(ctx context.Context, query dispatch.SentQuery) (dispatch.SentEvidence, error) {
 	lookup, err := g.client.SearchSent(ctx, query.Email, query.Subject, query.AttemptedAt)
 	return dispatch.SentEvidence{Found: lookup.Found, MessageID: lookup.MessageID, Verified: lookup.Verified, Detail: lookup.Detail}, err
+}
+
+type gmailSentLister struct {
+	client *auth.Client
+}
+
+func (g gmailSentLister) ListSent(ctx context.Context, email string, since time.Time) ([]dispatch.SentHit, error) {
+	listed, err := g.client.ListSent(ctx, email, "", since)
+	if err != nil {
+		return nil, err
+	}
+	hits := make([]dispatch.SentHit, 0, len(listed.Messages))
+	for _, message := range listed.Messages {
+		hits = append(hits, dispatch.SentHit{ID: message.ID, Date: message.Date, To: message.To, Subject: message.Subject})
+	}
+	return hits, nil
+}
+
+func sentListerFor(sender mailSender) dispatch.SentLister {
+	gmail, ok := sender.(gmailSender)
+	if !ok || gmail.client == nil {
+		return nil
+	}
+	return gmailSentLister{client: gmail.client}
 }
 
 type chainProbe struct {

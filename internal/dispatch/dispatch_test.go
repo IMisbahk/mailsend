@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/IMisbahk/mailsend/internal/auth"
 	mailmsg "github.com/IMisbahk/mailsend/internal/mail"
 	"github.com/IMisbahk/mailsend/internal/store"
 )
@@ -623,6 +624,99 @@ func (f fileSender) Send(ctx context.Context, built mailmsg.BuiltMessage) (strin
 func (fileSender) FromAddress() string    { return "misbah@example.com" }
 func (fileSender) DefaultReplyTo() string { return "" }
 func (fileSender) Provider() string       { return "smtp" }
+
+func TestRequireSentCheckBlocksARecentRecipient(t *testing.T) {
+	db := openDispatchDB(t)
+	start := time.Date(2026, 10, 21, 10, 0, 0, 0, time.UTC)
+	seedBatch(t, db, "batch-a", start, []queued{{email: "ada@example.com", at: start}, {email: "new@example.com", at: start}})
+	clock := &fakeClock{now: start}
+	sender := &fakeSender{clock: clock}
+	dispatcher := testDispatcher(db, clock, sender, nil, 0, 0, time.UTC)
+	dispatcher.Once = false
+	dispatcher.RequireSentCheck = true
+	dispatcher.SentWithin = 7 * 24 * time.Hour
+	dispatcher.HookRunner = func(_ context.Context, _ string, payload HookPayload) (int, string, error) {
+		if payload.Email == "ada@example.com" {
+			t.Fatal("hook ran for a recipient already in Sent")
+		}
+		return 0, "", nil
+	}
+	dispatcher.Hook = "precheck"
+	dispatcher.SentLister = scriptedSent{hits: map[string][]SentHit{
+		"ada@example.com": {{ID: "gmail-9", To: "ada@example.com", Subject: "Hello ada@example.com", Date: start.Add(-time.Hour)}},
+	}}
+	guardSleeps(t, clock, 40)
+	result, err := dispatcher.Run(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.BlockedThisRun != 1 || result.SentThisRun != 1 || len(sender.calls()) != 1 || sender.calls()[0] != "new@example.com" {
+		t.Fatalf("result %#v calls %v", result, sender.calls())
+	}
+	blocked := itemByEmail(t, db, "ada@example.com")
+	if blocked.Status != "blocked" || !strings.Contains(blocked.Error, "gmail-9") {
+		t.Fatalf("blocked %#v", blocked)
+	}
+}
+
+func TestRequireSentCheckFailsClosedWithoutSending(t *testing.T) {
+	db := openDispatchDB(t)
+	start := time.Date(2026, 10, 21, 10, 0, 0, 0, time.UTC)
+	seedBatch(t, db, "batch-a", start, []queued{{email: "ada@example.com", at: start}})
+	clock := &fakeClock{now: start}
+	sender := &fakeSender{clock: clock}
+	dispatcher := testDispatcher(db, clock, sender, nil, 0, 0, time.UTC)
+	dispatcher.Once = true
+	dispatcher.RequireSentCheck = true
+	dispatcher.SentLister = scriptedSent{err: auth.ErrScopeMissing}
+	_, err := dispatcher.Run(context.Background())
+	if !errors.Is(err, auth.ErrScopeMissing) {
+		t.Fatalf("error %v", err)
+	}
+	if len(sender.calls()) != 0 || itemStatus(t, db, "ada@example.com") != "pending" {
+		t.Fatalf("sent %v status %s", sender.calls(), itemStatus(t, db, "ada@example.com"))
+	}
+
+	dispatcher.SentLister = nil
+	_, err = dispatcher.Run(context.Background())
+	if err == nil || !errors.Is(err, auth.ErrScopeMissing) {
+		t.Fatalf("missing lister %v", err)
+	}
+	if len(sender.calls()) != 0 {
+		t.Fatalf("sent without a checker %v", sender.calls())
+	}
+}
+
+func TestDispatchWithoutSentGateStillSends(t *testing.T) {
+	db := openDispatchDB(t)
+	start := time.Date(2026, 10, 21, 10, 0, 0, 0, time.UTC)
+	seedBatch(t, db, "batch-a", start, []queued{{email: "ada@example.com", at: start}})
+	clock := &fakeClock{now: start}
+	sender := &fakeSender{clock: clock}
+	dispatcher := testDispatcher(db, clock, sender, nil, 0, 0, time.UTC)
+	dispatcher.Once = true
+	dispatcher.SentLister = scriptedSent{err: auth.ErrScopeMissing, fail: t}
+	result, err := dispatcher.Run(context.Background())
+	if err != nil || result.SentThisRun != 1 || len(sender.calls()) != 1 {
+		t.Fatalf("result %#v err %v calls %v", result, err, sender.calls())
+	}
+}
+
+type scriptedSent struct {
+	hits map[string][]SentHit
+	err  error
+	fail interface{ Fatalf(string, ...any) }
+}
+
+func (s scriptedSent) ListSent(_ context.Context, email string, _ time.Time) ([]SentHit, error) {
+	if s.fail != nil {
+		s.fail.Fatalf("sent check ran for %s while the gate was off", email)
+	}
+	if s.err != nil {
+		return nil, s.err
+	}
+	return s.hits[email], nil
+}
 
 func runDispatchChild() error {
 	db, err := store.Open(os.Getenv("MAILSEND_TEST_DB"))

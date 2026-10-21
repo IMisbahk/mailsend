@@ -23,7 +23,16 @@ import (
 
 const service = "mailsend"
 
-var scopes = []string{"https://www.googleapis.com/auth/gmail.send", "openid", "email"}
+// gmail.readonly is the narrowest scope that can search Sent. Google's
+// users.messages.list documents that the q parameter cannot be used with
+// gmail.metadata, and a token that also carries gmail.metadata is held to
+// that restriction. Do not add gmail.metadata beside this scope.
+var scopes = []string{
+	"https://www.googleapis.com/auth/gmail.send",
+	"https://www.googleapis.com/auth/gmail.readonly",
+	"openid",
+	"email",
+}
 
 type credentials struct {
 	Installed *oauthClient `json:"installed"`

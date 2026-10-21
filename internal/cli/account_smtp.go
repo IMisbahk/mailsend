@@ -72,10 +72,10 @@ func accountShow(cmd *cobra.Command) error {
 		"email":         profile.EmailAddress,
 		"authenticated": true,
 		"aliases":       []string{},
-		"aliases_note":  "Alias listing requires Gmail settings scope; mailsend requests only gmail.send plus basic account identity. The From address remains the authenticated account.",
+		"aliases_note":  "Alias listing requires Gmail settings scope, which mailsend does not request. The From address remains the authenticated account.",
 	}
 	return output(value, func() {
-		fmt.Printf("Account: %s\nProvider: gmail\nEmail: %s\nAuthentication: active\nAliases: not queried (minimum send scope)\n", name, profile.EmailAddress)
+		fmt.Printf("Account: %s\nProvider: gmail\nEmail: %s\nAuthentication: active\nAliases: not queried (no settings scope)\n", name, profile.EmailAddress)
 	})
 }
 

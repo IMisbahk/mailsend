@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -12,6 +13,31 @@ import (
 	"strings"
 	"time"
 )
+
+const (
+	sentPageSize = 25
+	sentMaxPages = 8
+)
+
+// ErrScopeMissing means the stored token cannot search Gmail Sent.
+// Sending still works. The operator re-runs login to grant gmail.readonly.
+var ErrScopeMissing = errors.New("scope missing, re-run mailsend login")
+
+// SentMessage is one Gmail Sent message that matched a recipient search.
+type SentMessage struct {
+	ID      string    `json:"id"`
+	Date    time.Time `json:"date"`
+	To      string    `json:"to"`
+	Subject string    `json:"subject"`
+}
+
+// SentList is a page of Sent matches. Truncated means more pages existed
+// after the ones that were read. A truncated empty list is returned as an error
+// so a caller cannot treat "not found" as proven.
+type SentList struct {
+	Messages  []SentMessage
+	Truncated bool
+}
 
 // SentLookup is the result of searching Gmail Sent for a recipient and subject.
 // Verified is false when the token cannot read mail or the request failed.
@@ -23,78 +49,119 @@ type SentLookup struct {
 	Detail    string
 }
 
-// SearchSent lists recent Sent messages and matches recipient, subject, and time.
-// The default mailsend login only requests gmail.send, which cannot read Sent.
-// A 401 or 403 is reported as unverified rather than as a hard failure.
-func (c *Client) SearchSent(ctx context.Context, recipient, subject string, attemptedAt time.Time) (SentLookup, error) {
+// ListSent searches Gmail Sent for recipient, optionally limited by subject and
+// since. Matches are confirmed from message headers, not from the query alone.
+func (c *Client) ListSent(ctx context.Context, recipient, subject string, since time.Time) (SentList, error) {
 	if c == nil || c.HTTP == nil {
-		return SentLookup{Verified: false, Detail: "Gmail client is not configured"}, nil
+		return SentList{}, fmt.Errorf("Gmail client is not configured")
 	}
+	recipient = strings.TrimSpace(recipient)
+	if recipient == "" || strings.ContainsAny(recipient, " \t\r\n") {
+		return SentList{}, fmt.Errorf("invalid recipient %q", recipient)
+	}
+	subject = strings.Join(strings.Fields(subject), " ")
+	query := sentQuery(recipient, subject, since)
+	pageToken := ""
+	found := make([]SentMessage, 0)
+	for page := 0; page < sentMaxPages; page++ {
+		values := url.Values{}
+		values.Set("maxResults", strconv.Itoa(sentPageSize))
+		values.Set("q", query)
+		if pageToken != "" {
+			values.Set("pageToken", pageToken)
+		}
+		listURL := c.baseURL() + "/gmail/v1/users/me/messages?" + values.Encode()
+		body, status, err := c.gmailGET(ctx, listURL)
+		if err != nil {
+			return SentList{}, err
+		}
+		if scopeDenied(status, body) {
+			return SentList{}, ErrScopeMissing
+		}
+		if status < 200 || status >= 300 {
+			return SentList{}, fmt.Errorf("Gmail Sent search returned HTTP %d", status)
+		}
+		var listed struct {
+			Messages []struct {
+				ID string `json:"id"`
+			} `json:"messages"`
+			NextPageToken string `json:"nextPageToken"`
+		}
+		if err = json.Unmarshal(body, &listed); err != nil {
+			return SentList{}, fmt.Errorf("Gmail Sent search returned unreadable JSON")
+		}
+		for _, message := range listed.Messages {
+			if message.ID == "" {
+				continue
+			}
+			hit, ok, err := c.readSentMessage(ctx, message.ID, recipient, subject, since)
+			if err != nil {
+				return SentList{}, err
+			}
+			if ok {
+				found = append(found, hit)
+			}
+		}
+		if listed.NextPageToken == "" {
+			return SentList{Messages: found}, nil
+		}
+		pageToken = listed.NextPageToken
+	}
+	if len(found) == 0 {
+		return SentList{}, fmt.Errorf("Gmail Sent search was truncated before it could rule out a match")
+	}
+	return SentList{Messages: found, Truncated: true}, nil
+}
+
+// SearchSent looks for one Sent message to recipient with subject at or after
+// attemptedAt minus two minutes. A missing read scope is unverified, with
+// ErrScopeMissing's text, so a crashed send is parked instead of retried.
+func (c *Client) SearchSent(ctx context.Context, recipient, subject string, attemptedAt time.Time) (SentLookup, error) {
 	recipient = strings.TrimSpace(recipient)
 	subject = strings.TrimSpace(subject)
 	if recipient == "" || subject == "" {
 		return SentLookup{Verified: false, Detail: "recipient and subject are required"}, nil
 	}
-	query := fmt.Sprintf("in:sent to:%s subject:%s", recipient, strings.ReplaceAll(subject, `"`, " "))
-	listURL := c.baseURL() + "/gmail/v1/users/me/messages?maxResults=10&q=" + url.QueryEscape(query)
-	body, status, err := c.gmailGET(ctx, listURL)
+	var since time.Time
+	if !attemptedAt.IsZero() {
+		since = attemptedAt.Add(-2 * time.Minute)
+	}
+	listed, err := c.ListSent(ctx, recipient, subject, since)
 	if err != nil {
+		if errors.Is(err, ErrScopeMissing) {
+			return SentLookup{Verified: false, Detail: ErrScopeMissing.Error()}, nil
+		}
 		return SentLookup{Verified: false, Detail: err.Error()}, err
 	}
-	if status == http.StatusUnauthorized || status == http.StatusForbidden {
-		return SentLookup{Verified: false, Detail: fmt.Sprintf("Gmail Sent search returned HTTP %d; the login scope cannot read mail, so this send cannot be confirmed", status)}, nil
-	}
-	if status < 200 || status >= 300 {
-		return SentLookup{Verified: false, Detail: fmt.Sprintf("Gmail Sent search returned HTTP %d", status)}, nil
-	}
-	var listed struct {
-		Messages []struct {
-			ID string `json:"id"`
-		} `json:"messages"`
-	}
-	if err = json.Unmarshal(body, &listed); err != nil {
-		return SentLookup{Verified: false, Detail: "Gmail Sent search returned unreadable JSON"}, nil
-	}
 	if len(listed.Messages) == 0 {
+		if listed.Truncated {
+			return SentLookup{Verified: false, Detail: "Gmail Sent search was truncated before it could rule out a match"}, nil
+		}
 		return SentLookup{Verified: true, Found: false}, nil
 	}
-	for _, message := range listed.Messages {
-		if message.ID == "" {
-			continue
-		}
-		match, verified, err := c.sentMessageMatches(ctx, message.ID, recipient, subject, attemptedAt)
-		if err != nil {
-			return SentLookup{Verified: false, Detail: err.Error()}, err
-		}
-		if !verified {
-			return SentLookup{Verified: false, Detail: "Gmail message metadata could not be read"}, nil
-		}
-		if match {
-			return SentLookup{Verified: true, Found: true, MessageID: message.ID}, nil
-		}
-	}
-	return SentLookup{Verified: true, Found: false}, nil
+	return SentLookup{Verified: true, Found: true, MessageID: listed.Messages[0].ID}, nil
 }
 
-func (c *Client) sentMessageMatches(ctx context.Context, id, recipient, subject string, attemptedAt time.Time) (bool, bool, error) {
+func (c *Client) readSentMessage(ctx context.Context, id, recipient, subject string, since time.Time) (SentMessage, bool, error) {
 	values := url.Values{}
 	values.Set("format", "metadata")
 	values.Add("metadataHeaders", "Subject")
 	values.Add("metadataHeaders", "To")
 	values.Add("metadataHeaders", "Cc")
+	values.Add("metadataHeaders", "Bcc")
 	getURL := c.baseURL() + "/gmail/v1/users/me/messages/" + url.PathEscape(id) + "?" + values.Encode()
 	body, status, err := c.gmailGET(ctx, getURL)
 	if err != nil {
-		return false, false, err
+		return SentMessage{}, false, err
 	}
-	if status == http.StatusUnauthorized || status == http.StatusForbidden {
-		return false, false, nil
+	if scopeDenied(status, body) {
+		return SentMessage{}, false, ErrScopeMissing
 	}
 	if status == http.StatusNotFound {
-		return false, true, nil
+		return SentMessage{}, false, nil
 	}
 	if status < 200 || status >= 300 {
-		return false, false, nil
+		return SentMessage{}, false, fmt.Errorf("Gmail message %s returned HTTP %d", id, status)
 	}
 	var message struct {
 		InternalDate string `json:"internalDate"`
@@ -106,39 +173,89 @@ func (c *Client) sentMessageMatches(ctx context.Context, id, recipient, subject 
 		} `json:"payload"`
 	}
 	if err = json.Unmarshal(body, &message); err != nil {
-		return false, false, nil
+		return SentMessage{}, false, fmt.Errorf("Gmail message %s metadata could not be read", id)
 	}
 	if len(message.Payload.Headers) == 0 {
-		return false, false, nil
+		return SentMessage{}, false, fmt.Errorf("Gmail message %s metadata could not be read", id)
 	}
-	var storedSubject, toHeader, ccHeader string
+	var storedSubject, toHeader, ccHeader, bccHeader string
 	for _, header := range message.Payload.Headers {
 		switch strings.ToLower(header.Name) {
 		case "subject":
-			storedSubject = header.Value
+			storedSubject = strings.TrimSpace(header.Value)
 		case "to":
 			toHeader = header.Value
 		case "cc":
 			ccHeader = header.Value
+		case "bcc":
+			bccHeader = header.Value
 		}
 	}
-	if !strings.EqualFold(strings.TrimSpace(storedSubject), subject) {
-		return false, true, nil
+	if subject != "" && !strings.EqualFold(storedSubject, subject) {
+		return SentMessage{}, false, nil
 	}
-	if !headerHasAddress(toHeader, recipient) && !headerHasAddress(ccHeader, recipient) {
-		return false, true, nil
+	if !headerHasAddress(toHeader, recipient) && !headerHasAddress(ccHeader, recipient) && !headerHasAddress(bccHeader, recipient) {
+		return SentMessage{}, false, nil
 	}
-	if !attemptedAt.IsZero() && message.InternalDate != "" {
-		millis, err := strconv.ParseInt(message.InternalDate, 10, 64)
-		if err != nil {
-			return false, false, nil
+	sentAt, dated, err := sentInstant(message.InternalDate)
+	if err != nil {
+		return SentMessage{}, false, fmt.Errorf("Gmail message %s has an unreadable date", id)
+	}
+	if !since.IsZero() {
+		if !dated {
+			return SentMessage{}, false, fmt.Errorf("Gmail message %s has no date", id)
 		}
-		sentAt := time.UnixMilli(millis)
-		if sentAt.Before(attemptedAt.Add(-2 * time.Minute)) {
-			return false, true, nil
+		if sentAt.Before(since) {
+			return SentMessage{}, false, nil
 		}
 	}
-	return true, true, nil
+	return SentMessage{ID: id, Date: sentAt.UTC(), To: recipient, Subject: storedSubject}, true, nil
+}
+
+func sentInstant(internalDate string) (time.Time, bool, error) {
+	internalDate = strings.TrimSpace(internalDate)
+	if internalDate == "" {
+		return time.Time{}, false, nil
+	}
+	millis, err := strconv.ParseInt(internalDate, 10, 64)
+	if err != nil {
+		return time.Time{}, false, err
+	}
+	return time.UnixMilli(millis), true, nil
+}
+
+func sentQuery(recipient, subject string, since time.Time) string {
+	parts := []string{"in:sent", "to:" + recipient}
+	if !since.IsZero() {
+		parts = append(parts, fmt.Sprintf("after:%d", since.Add(-time.Second).Unix()))
+	}
+	if subject != "" {
+		parts = append(parts, "subject:"+quoteGmailTerm(subject))
+	}
+	return strings.Join(parts, " ")
+}
+
+func quoteGmailTerm(value string) string {
+	value = strings.ReplaceAll(value, `\`, `\\`)
+	value = strings.ReplaceAll(value, `"`, `\"`)
+	return `"` + value + `"`
+}
+
+func scopeDenied(status int, body []byte) bool {
+	if status != http.StatusForbidden {
+		return false
+	}
+	text := strings.ToLower(string(body))
+	if strings.Contains(text, "access_token_scope_insufficient") || strings.Contains(text, "insufficientpermissions") {
+		return true
+	}
+	if strings.Contains(text, "metadata scope") {
+		return true
+	}
+	if strings.Contains(text, "insufficient") && (strings.Contains(text, "scope") || strings.Contains(text, "permission")) {
+		return true
+	}
+	return false
 }
 
 func (c *Client) gmailGET(ctx context.Context, target string) ([]byte, int, error) {
