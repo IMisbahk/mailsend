@@ -73,7 +73,10 @@ func openSender(ctx context.Context, name string) (mailSender, error) {
 			return nil, err
 		}
 		if client.Account.Email == "" {
-			profile, err := client.Profile(ctx)
+			auth.Debugf("sender: no stored email for %s; fetching Google identity", name)
+			idCtx, cancel := context.WithTimeout(ctx, auth.IdentityTimeout)
+			profile, err := client.Profile(idCtx)
+			cancel()
 			if err != nil {
 				return nil, err
 			}

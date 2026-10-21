@@ -6,6 +6,8 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -13,6 +15,78 @@ import (
 
 	"github.com/IMisbahk/mailsend/internal/auth"
 )
+
+type hangTransport struct{}
+
+func (hangTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	<-req.Context().Done()
+	return nil, req.Context().Err()
+}
+
+func TestSentCheckHangingCallExitsWithinBudget(t *testing.T) {
+	useTestConfig(t)
+	previousClient := openGmailClient
+	previousBudget := sentCheckTimeout
+	sentCheckTimeout = 250 * time.Millisecond
+	openGmailClient = func(context.Context, string) (*auth.Client, error) {
+		return &auth.Client{HTTP: &http.Client{Transport: hangTransport{}}, BaseURL: "https://gmail.googleapis.com"}, nil
+	}
+	t.Cleanup(func() {
+		openGmailClient = previousClient
+		sentCheckTimeout = previousBudget
+	})
+	started := time.Now()
+	stdout, stderr, err := executeCLI(t, "", "--debug", "--account", "sunbeam", "sent-check", "--to", "ada@example.com", "--since", "1d", "--json")
+	var status *statusExit
+	if !errors.As(err, &status) || status.code != 2 || status.err == nil || !strings.Contains(status.err.Error(), "timed out") {
+		t.Fatalf("exit %#v %v stdout %s stderr %s", status, err, stdout, stderr)
+	}
+	if time.Since(started) > 2*time.Second {
+		t.Fatalf("sent-check took %s", time.Since(started))
+	}
+	if !strings.Contains(stderr, "debug: sent-check:") {
+		t.Fatalf("debug trace %s", stderr)
+	}
+}
+
+func TestAccountUsesStoredEmailWhenIdentityHangs(t *testing.T) {
+	dir := useTestConfig(t)
+	manifest := []byte("{\n  \"default\": \"sunbeam\",\n  \"accounts\": [\"sunbeam\"],\n  \"emails\": {\n    \"sunbeam\": \"misbah@sunbeam.agency\"\n  }\n}\n")
+	if err := os.WriteFile(filepath.Join(dir, "accounts.json"), manifest, 0600); err != nil {
+		t.Fatal(err)
+	}
+	hung := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-r.Context().Done()
+	}))
+	defer hung.Close()
+	previousLoad := loadGmail
+	previousTimeout := auth.IdentityTimeout
+	loadGmail = func(name string) (*auth.Client, error) {
+		return &auth.Client{
+			HTTP: hung.Client(), IdentityURL: hung.URL,
+			Account: auth.Account{Name: name, Email: "misbah@sunbeam.agency"},
+		}, nil
+	}
+	auth.IdentityTimeout = 200 * time.Millisecond
+	t.Cleanup(func() {
+		loadGmail = previousLoad
+		auth.IdentityTimeout = previousTimeout
+	})
+	started := time.Now()
+	stdout, stderr, err := executeCLI(t, "", "--debug", "--account", "sunbeam", "account", "--json")
+	if err != nil {
+		t.Fatalf("account %v %s %s", err, stdout, stderr)
+	}
+	if time.Since(started) > 2*time.Second {
+		t.Fatalf("account took %s", time.Since(started))
+	}
+	if !strings.Contains(stdout, "misbah@sunbeam.agency") || !strings.Contains(stdout, `"identity_error"`) {
+		t.Fatalf("stdout %s", stdout)
+	}
+	if !strings.Contains(stderr, "debug: account:") {
+		t.Fatalf("debug trace %s", stderr)
+	}
+}
 
 func TestParseSpanAcceptsDays(t *testing.T) {
 	parsed, err := parseSpan("30d")

@@ -56,27 +56,54 @@ func accountShow(cmd *cobra.Command) error {
 			fmt.Printf("Account: %s\nProvider: smtp\nFrom: %s\nHost: %s\nPort: %d\nTLS: %s\nUsername: %s\nReply-To: %s\nPassword: stored in the OS keychain\n", name, cfg.From, cfg.Host, cfg.Port, cfg.TLS, cfg.Username, replyTo)
 		})
 	}
-	client, err := auth.Load(name)
+	auth.Debugf("account: loading %s", name)
+	client, err := loadGmail(name)
 	if err != nil {
 		return err
 	}
-	ctx, cancel := context.WithTimeout(cmd.Context(), 30*time.Second)
-	defer cancel()
-	profile, err := client.Profile(ctx)
+	email, warning, err := gmailIdentity(cmd.Context(), client)
 	if err != nil {
 		return err
 	}
 	value := map[string]any{
 		"account":       name,
 		"provider":      auth.ProviderGmail,
-		"email":         profile.EmailAddress,
+		"email":         email,
 		"authenticated": true,
 		"aliases":       []string{},
 		"aliases_note":  "Alias listing requires Gmail settings scope, which mailsend does not request. The From address remains the authenticated account.",
 	}
+	if warning != "" {
+		value["identity_error"] = warning
+	}
 	return output(value, func() {
-		fmt.Printf("Account: %s\nProvider: gmail\nEmail: %s\nAuthentication: active\nAliases: not queried (no settings scope)\n", name, profile.EmailAddress)
+		fmt.Printf("Account: %s\nProvider: gmail\nEmail: %s\nAuthentication: active\nAliases: not queried (no settings scope)\n", name, email)
+		if warning != "" {
+			fmt.Printf("Identity check failed: %s\n", warning)
+		}
 	})
+}
+
+var loadGmail = auth.Load
+
+func gmailIdentity(ctx context.Context, client *auth.Client) (string, string, error) {
+	auth.Debugf("account: fetching Google identity for %s", client.Account.Name)
+	ctx, cancel := context.WithTimeout(ctx, auth.IdentityTimeout)
+	defer cancel()
+	profile, err := client.Profile(ctx)
+	if err == nil && profile.EmailAddress != "" {
+		auth.Debugf("account: identity is %s", profile.EmailAddress)
+		return profile.EmailAddress, "", nil
+	}
+	if err == nil {
+		err = fmt.Errorf("Google user-info response did not contain an email address")
+	}
+	stored := strings.TrimSpace(client.Account.Email)
+	if stored != "" {
+		auth.Debugf("account: identity check failed (%v); using stored email %s", err, stored)
+		return stored, err.Error(), nil
+	}
+	return "", "", err
 }
 
 func accountAddCmd() *cobra.Command {
@@ -219,23 +246,28 @@ func quotaCmd() *cobra.Command {
 					fmt.Printf("Account: %s (%s)\nProvider: smtp\nRemaining sends: unavailable from SMTP\n%s\n", name, cfg.From, message)
 				})
 			}
-			client, err := auth.Load(name)
+			auth.Debugf("quota: loading %s", name)
+			client, err := loadGmail(name)
 			if err != nil {
 				return err
 			}
-			ctx, cancel := context.WithTimeout(cmd.Context(), 30*time.Second)
-			defer cancel()
-			profile, err := client.Profile(ctx)
+			email, warning, err := gmailIdentity(cmd.Context(), client)
 			if err != nil {
 				return err
 			}
 			value := map[string]any{
-				"account": name, "provider": auth.ProviderGmail, "email": profile.EmailAddress,
+				"account": name, "provider": auth.ProviderGmail, "email": email,
 				"remaining_sends": nil, "quota_available": false,
 				"message": "Gmail API does not provide a reliable remaining-send count. Google sending limits still apply; mailsend cannot bypass them.",
 			}
+			if warning != "" {
+				value["identity_error"] = warning
+			}
 			return output(value, func() {
-				fmt.Printf("Account: %s (%s)\nProvider: gmail\nRemaining sends: unavailable from Gmail API\nGmail sending limits apply and cannot be bypassed.\n", name, profile.EmailAddress)
+				fmt.Printf("Account: %s (%s)\nProvider: gmail\nRemaining sends: unavailable from Gmail API\nGmail sending limits apply and cannot be bypassed.\n", name, email)
+				if warning != "" {
+					fmt.Printf("Identity check failed: %s\n", warning)
+				}
 			})
 		},
 	}

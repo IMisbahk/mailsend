@@ -60,6 +60,8 @@ The CLI requests `gmail.send`, `gmail.readonly`, and OpenID's basic `openid` and
 
 A token saved by an older login, which has only `gmail.send`, still sends. `sent-check` and `dispatch --require-sent-check` need the read scope. Run `mailsend login` again for that account and approve the additional access. Until then those checks fail with `scope missing, re-run mailsend login` and do not treat the mailbox as empty.
 
+Keychain reads and Google calls have deadlines, including token refresh. On a headless machine the Secret Service can sit forever waiting for a prompt that will never appear; mailsend returns that as an error instead of waiting. `account` still asks Google who the token belongs to, and if that request fails it prints the address already stored for the account. `sent-check` returns exit 2 within 20 seconds on any failure. `--debug` writes a step trace to stderr and does not print the token. Only `mailsend login` opens a browser.
+
 Then:
 
 ```sh

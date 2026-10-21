@@ -108,8 +108,8 @@ func SaveSMTPAccount(name string, cfg ProviderConfig, password string) (string, 
 	if accountListed(current, name) {
 		status = "updated"
 	}
-	previousPassword, previousErr := keyring.Get(service, smtpPasswordKey(name))
-	if err = keyring.Set(service, smtpPasswordKey(name), password); err != nil {
+	previousPassword, previousErr := secretGet(smtpPasswordKey(name))
+	if err = secretPut(smtpPasswordKey(name), password); err != nil {
 		return "", fmt.Errorf("secure password storage failed in the OS keychain: %w; the password was not written to the config file", err)
 	}
 	if current.Providers == nil {
@@ -128,9 +128,9 @@ func SaveSMTPAccount(name string, cfg ProviderConfig, password string) (string, 
 	}
 	if err = writeManifest(current); err != nil {
 		if previousErr == nil {
-			_ = keyring.Set(service, smtpPasswordKey(name), previousPassword)
+			_ = secretPut(smtpPasswordKey(name), previousPassword)
 		} else {
-			_ = keyring.Delete(service, smtpPasswordKey(name))
+			_ = secretRemove(smtpPasswordKey(name))
 		}
 		return "", err
 	}
@@ -138,7 +138,7 @@ func SaveSMTPAccount(name string, cfg ProviderConfig, password string) (string, 
 }
 
 func SMTPPassword(name string) (string, error) {
-	password, err := keyring.Get(service, smtpPasswordKey(accountName(name)))
+	password, err := secretGet(smtpPasswordKey(accountName(name)))
 	if err != nil {
 		return "", err
 	}
@@ -146,7 +146,7 @@ func SMTPPassword(name string) (string, error) {
 }
 
 func HasSMTPPassword(name string) bool {
-	_, err := keyring.Get(service, smtpPasswordKey(accountName(name)))
+	_, err := secretGet(smtpPasswordKey(accountName(name)))
 	return err == nil
 }
 
@@ -182,7 +182,7 @@ func accountListed(current manifest, name string) bool {
 }
 
 func deleteSecret(key string) error {
-	err := keyring.Delete(service, key)
+	err := secretRemove(key)
 	if err == nil || errors.Is(err, keyring.ErrNotFound) || strings.Contains(strings.ToLower(err.Error()), "not found") {
 		return nil
 	}
