@@ -8,13 +8,13 @@ Type=simple
 User=mailsend
 Environment=MAILSEND_CONFIG_DIR=/var/lib/mailsend
 Environment=MAILSEND_PRECHECK=/var/lib/outbound/fu-precheck.py
-Environment=MAILSEND_SLOT=outbound
+# Do not set MAILSEND_SLOT. The hook uses the batch label so each region's ledger slot stays intact.
 ExecStart=/usr/local/bin/mailsend --account sunbeam dispatch \
   --interval 5m \
   --daily-cap 95 \
   --timezone Asia/Kolkata \
   --hold /var/lib/outbound/SEND_HOLD \
-  --hold-step fu-d3,fu-d7,ooo=/var/lib/outbound/FOLLOWUP_HOLD \
+  --hold-step fu-d3,fu-d7,ooo,fu=/var/lib/outbound/FOLLOWUP_HOLD \
   --hook /usr/local/bin/mailsend-presend-hook \
   --after-send /usr/local/bin/mailsend-presend-hook
 Restart=always

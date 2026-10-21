@@ -302,14 +302,26 @@ mailsend --account sunbeam dispatch \
   --daily-cap 95 \
   --timezone Asia/Kolkata \
   --hold /var/lib/outbound/SEND_HOLD \
-  --hold-step fu-d3,fu-d7,ooo=/var/lib/outbound/FOLLOWUP_HOLD \
+  --hold-step fu-d3,fu-d7,ooo,fu=/var/lib/outbound/FOLLOWUP_HOLD \
   --hook ./scripts/mailsend-presend-hook \
   --after-send ./scripts/mailsend-presend-hook
 ```
 
 `--interval` is the minimum time between any two sends for the account. The default is 5 minutes. A batch interval longer than that is used when that batch's email is the one being sent. `--interval 0s` leaves only the batch interval. The daily cap counts every `sent` row for the account in the SQLite history, including ordinary `send` and `bulk` messages, inside the named timezone. At midnight the count resets and a waiting dispatcher continues. `0` means there is no cap unless a batch stored one.
 
-A hold file that exists pauses the dispatcher. The emails stay queued. `--hold` pauses everything. `--hold-step fu-d3,fu-d7,ooo=/path/FOLLOWUP_HOLD` pauses only emails whose `step` is one of those names, which is how a follow-up hold can leave first emails moving. Removing the file lets the dispatcher continue.
+`--gap-from-history` makes that same gap start from the newest `sent` row in history for the account, including ordinary `send` and `bulk` messages, when that row is later than the queue's own cursor. Without the flag, only the queue cursor counts.
+
+```sh
+mailsend --account sunbeam dispatch --interval 5m --gap-from-history
+```
+
+`--lock-file` takes an exclusive `flock` on that path around each email's pre-send hook, the send, and the after-send hook. The lock is released between emails and while the dispatcher is waiting, so another sender that locks the same file can run in those gaps. The dispatcher waits for the lock. It does not skip the email.
+
+```sh
+mailsend --account sunbeam dispatch --interval 5m --lock-file /var/lib/outbound/send.lock
+```
+
+A hold file that exists pauses the dispatcher. The emails stay queued. `--hold` pauses everything. `--hold-step fu-d3,fu-d7,ooo,fu=/path/FOLLOWUP_HOLD` pauses only emails whose `step` is one of those names, which is how a follow-up hold can leave first emails moving. Removing the file lets the dispatcher continue.
 
 Each email is stored as `sending` before the provider is called, and becomes `sent` only when Gmail or SMTP returns an id. History then shows that send, so the daily cap sees it. If the process dies in between, the next `dispatch` reconciles the open row:
 
@@ -353,7 +365,7 @@ JSON object, JSON array, or CSV. Times without a zone use `--timezone` or the ba
   "daily_cap": 95,
   "holds": [
     {"path": "/var/lib/outbound/SEND_HOLD"},
-    {"path": "/var/lib/outbound/FOLLOWUP_HOLD", "steps": ["fu-d3", "fu-d7", "ooo"]}
+    {"path": "/var/lib/outbound/FOLLOWUP_HOLD", "steps": ["fu-d3", "fu-d7", "ooo", "fu"]}
   ],
   "emails": [
     {"to": "ada@example.com", "subject": "Hello {{name}}", "body": "Hi {{name}}", "vars": {"name": "Ada"}, "step": "first", "tag": "in-1"},
@@ -381,7 +393,7 @@ mailsend queue add --file wave.csv --start "2026-10-21 09:00" --interval 5m --ti
 
 Exit 0 allows the send. Any other exit blocks that email, stores the stderr (or stdout) as the reason, and the batch continues. The gap is not used for a blocked email. `--after-send` runs the same protocol after the provider id is stored, with `message_id` and `"status":"sent"` added. A failure there does not unsend the message.
 
-`scripts/mailsend-presend-hook` turns that JSON into a `fu-precheck.py` style invocation. Point `MAILSEND_PRECHECK` at the checker. It runs `check --reserve` before the send and `confirm --message-id` after. `MAILSEND_SLOT`, `MAILSEND_DEFAULT_KIND`, `MAILSEND_GMAIL_JSON`, and `MAILSEND_PRECHECK_NO_GMAIL=1` are optional. The script does not contain a machine-specific directory.
+`scripts/mailsend-presend-hook` turns that JSON into a `fu-precheck.py` style invocation. Point `MAILSEND_PRECHECK` at the checker. It runs `check --reserve` before the send and `confirm --message-id` after. `MAILSEND_SLOT`, `MAILSEND_DEFAULT_KIND`, and `MAILSEND_GMAIL_JSON` are optional. `MAILSEND_PRECHECK_NO_GMAIL=1` adds `--no-gmail` to the pre-send `check` only; `confirm` still records the sent message. The script does not contain a machine-specific directory. Leave `MAILSEND_SLOT` unset when each batch label is the ledger slot; a unit-wide value overwrites those names.
 
 ### Keep the dispatcher running
 
@@ -399,7 +411,7 @@ A shell loop does the same job with `--once`, which sends at most one due email 
 while true; do
   mailsend --account sunbeam dispatch --once --interval 5m --daily-cap 95 --timezone Asia/Kolkata \
     --hold "$OUTBOUND/SEND_HOLD" \
-    --hold-step "fu-d3,fu-d7,ooo=$OUTBOUND/FOLLOWUP_HOLD" \
+    --hold-step "fu-d3,fu-d7,ooo,fu=$OUTBOUND/FOLLOWUP_HOLD" \
     --hook ./scripts/mailsend-presend-hook \
     --after-send ./scripts/mailsend-presend-hook
   sleep 15
@@ -410,7 +422,7 @@ done
 
 A slot folder that used to run its own sender can become one batch, and one `dispatch` process replaces every regional sender.
 
-1. Build a JSON or CSV file from the slot queue. `to` is the recipient, `subject` and `body` (or `body_file`) are the note, and `step` is `first`, `fu-d3`, `fu-d7`, or `ooo`. Use `at` for a specific clock time, or `start` plus `interval` for a fixed spacing. The old random 3–7 minute pause is a fixed interval here; 5 minutes is the default.
+1. Build a JSON or CSV file from the slot queue. `to` is the recipient, `subject` and `body` (or `body_file`) are the note, and `step` is `first`, `fu-d3`, `fu-d7`, `ooo`, or `fu`. Use `at` for a specific clock time, or `start` plus `interval` for a fixed spacing. The old random 3–7 minute pause is a fixed interval here; 5 minutes is the default.
 2. Stop the per-slot processes. Leave `SEND_HOLD` and `FOLLOWUP_HOLD` in place until you mean to send. Pass those paths to `--hold` and `--hold-step`. The dispatcher waits while the files exist.
 3. Set `--daily-cap 95 --timezone Asia/Kolkata` (or your own cap and zone). The cap includes mail already recorded by `send` and `bulk`.
 4. Point `--hook` and `--after-send` at `scripts/mailsend-presend-hook`, and set `MAILSEND_PRECHECK` to your checker. The checker still owns its ledger. mailsend's `sending` / `sent` rows are the record that prevents a duplicate after a crash.

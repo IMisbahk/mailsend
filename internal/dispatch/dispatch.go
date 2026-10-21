@@ -98,6 +98,8 @@ type Dispatcher struct {
 	HookRunner        HookRunner
 	Logf              func(string, ...any)
 	LockPath          string
+	ItemLockPath      string
+	GapFromHistory    bool
 	MaxNotSentRetries int
 
 	sentThisRun    int
@@ -232,6 +234,15 @@ func (d *Dispatcher) deliver(ctx context.Context, send store.QueueSend) (bool, R
 			return blocked, result, done, err
 		}
 	}
+	unlock, err := d.lockItem(ctx)
+	if err != nil {
+		if ctx.Err() != nil {
+			result, stopErr := d.stopped(ctx.Err())
+			return false, result, true, stopErr
+		}
+		return false, Result{}, true, err
+	}
+	defer unlock()
 	if command := d.hookCommand(send.Batch); command != "" {
 		code, reason, hookErr := d.HookRunner(ctx, command, payloadFor(send))
 		if hookErr != nil && ctx.Err() != nil {
@@ -254,6 +265,7 @@ func (d *Dispatcher) deliver(ctx context.Context, send store.QueueSend) (bool, R
 		}
 	}
 	if path, held := d.itemHeld(send.Item, send.Batch); held {
+		unlock()
 		result, done, err := d.wait(ctx, d.now().Add(d.Poll), "hold: waiting because "+path+" exists")
 		return false, result, done, err
 	}
@@ -262,6 +274,7 @@ func (d *Dispatcher) deliver(ctx context.Context, send store.QueueSend) (bool, R
 		return false, Result{}, true, err
 	}
 	if over {
+		unlock()
 		reason := fmt.Sprintf("daily cap %d reached in %s; next window %s", d.DailyCap, d.Timezone.String(), until.In(d.Timezone).Format(time.RFC3339))
 		result, done, err := d.wait(ctx, until, reason)
 		return false, result, done, err
@@ -312,6 +325,7 @@ func (d *Dispatcher) deliver(ctx context.Context, send store.QueueSend) (bool, R
 			delay = time.Minute
 		}
 		d.logf("%s stayed queued: %s", send.Item.Email, sendErr)
+		unlock()
 		result, done, err := d.wait(ctx, d.now().Add(delay), sendErr.Error())
 		return false, result, done, err
 	}
@@ -508,17 +522,37 @@ func (d *Dispatcher) readyAt(send store.QueueSend) (time.Time, error) {
 		return time.Time{}, fmt.Errorf("queue item %d has an invalid schedule: %w", send.Item.ID, err)
 	}
 	earliest := scheduled
-	last, ok, err := d.DB.DispatchCursor(d.Account)
+	anchor, ok, err := d.gapAnchor()
 	if err != nil {
 		return time.Time{}, err
 	}
 	if ok {
-		notBefore := last.Add(gapBetween(send.Batch.Interval(), d.Interval))
+		notBefore := anchor.Add(gapBetween(send.Batch.Interval(), d.Interval))
 		if notBefore.After(earliest) {
 			earliest = notBefore
 		}
 	}
 	return earliest, nil
+}
+
+func (d *Dispatcher) gapAnchor() (time.Time, bool, error) {
+	cursor, found, err := d.DB.DispatchCursor(d.Account)
+	if err != nil {
+		return time.Time{}, false, err
+	}
+	anchor := cursor
+	if !d.GapFromHistory {
+		return anchor, found, nil
+	}
+	latest, hasLatest, err := d.DB.LatestSentAt(d.Account)
+	if err != nil {
+		return time.Time{}, false, err
+	}
+	if hasLatest && (!found || latest.After(anchor)) {
+		anchor = latest
+		found = true
+	}
+	return anchor, found, nil
 }
 
 func (d *Dispatcher) capReached() (bool, time.Time, error) {
@@ -770,6 +804,35 @@ func nextMidnight(now time.Time, loc *time.Location) time.Time {
 	}
 	local := now.In(loc)
 	return time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, loc).AddDate(0, 0, 1)
+}
+
+func (d *Dispatcher) lockItem(ctx context.Context) (func(), error) {
+	path := strings.TrimSpace(d.ItemLockPath)
+	if path == "" {
+		return func() {}, nil
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		return nil, fmt.Errorf("cannot prepare lock file %s: %w", path, err)
+	}
+	lock := flock.New(path)
+	ok, err := lock.TryLockContext(ctx, 50*time.Millisecond)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		return nil, fmt.Errorf("could not lock %s", path)
+	}
+	released := false
+	return func() {
+		if released {
+			return
+		}
+		released = true
+		_ = lock.Unlock()
+	}, nil
 }
 
 func acquireDispatchLock(path string) (*flock.Flock, error) {

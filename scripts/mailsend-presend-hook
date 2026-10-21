@@ -19,7 +19,7 @@ Environment (nothing here is tied to a particular machine):
   MAILSEND_SLOT              --slot value; default is the batch label
   MAILSEND_DEFAULT_KIND      kind used when step is empty; default first
   MAILSEND_GMAIL_JSON        optional file passed as --gmail-json
-  MAILSEND_PRECHECK_NO_GMAIL set to 1 to add --no-gmail
+  MAILSEND_PRECHECK_NO_GMAIL set to 1 to add --no-gmail on the pre-send check only
   MAILSEND_PRECHECK_EXTRA    extra arguments, split on spaces
 
 Kinds accepted from step: first, fu-d3, fu-d7, ooo, fu.
@@ -61,11 +61,11 @@ def main():
         argv = [python, precheck, "confirm", email, "--message-id", message_id, "--kind", kind, "--slot", slot, "--subject", subject]
     else:
         argv = [python, precheck, "check", email, "--kind", kind, "--slot", slot, "--subject", subject, "--json", "--reserve"]
+        if os.environ.get("MAILSEND_PRECHECK_NO_GMAIL", "").strip() == "1":
+            argv.append("--no-gmail")
     gmail_json = os.environ.get("MAILSEND_GMAIL_JSON", "").strip()
     if gmail_json:
         argv.extend(["--gmail-json", gmail_json])
-    if os.environ.get("MAILSEND_PRECHECK_NO_GMAIL", "").strip() == "1":
-        argv.append("--no-gmail")
     extra = os.environ.get("MAILSEND_PRECHECK_EXTRA", "").strip()
     if extra:
         argv.extend(shlex.split(extra))

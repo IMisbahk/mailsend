@@ -622,6 +622,33 @@ func (d *DB) SentCountSince(account string, start time.Time) (int, error) {
 	return count, rows.Err()
 }
 
+// LatestSentAt is the newest confirmed send for the account, including
+// ordinary send and bulk history. ok is false when the account has no sent row.
+func (d *DB) LatestSentAt(account string) (time.Time, bool, error) {
+	rows, err := d.Query(`SELECT r.updated_at FROM recipients r JOIN jobs j ON j.id=r.job_id WHERE j.account=? AND r.status='sent'`, account)
+	if err != nil {
+		return time.Time{}, false, err
+	}
+	defer rows.Close()
+	var latest time.Time
+	found := false
+	for rows.Next() {
+		var raw string
+		if err = rows.Scan(&raw); err != nil {
+			return time.Time{}, false, err
+		}
+		stamp, err := ParseStamp(raw)
+		if err != nil {
+			return time.Time{}, false, fmt.Errorf("history timestamp %q: %w", raw, err)
+		}
+		if !found || stamp.After(latest) {
+			latest = stamp
+			found = true
+		}
+	}
+	return latest, found, rows.Err()
+}
+
 // FindConfirmedSend looks for a history row that already proves this recipient and subject were accepted.
 func (d *DB) FindConfirmedSend(account, email, subject string, after time.Time, exceptRecipient int64) (string, bool, error) {
 	rows, err := d.Query(`SELECT r.id, r.subject, r.message_id, r.updated_at FROM recipients r JOIN jobs j ON j.id=r.job_id WHERE j.account=? AND lower(r.email)=lower(?) AND r.status='sent' AND r.message_id!=''`, account, email)
