@@ -285,6 +285,124 @@ mailsend send --to alex@example.com --subject "Reminder" --body "Hello" \
 
 The schedule is local time; RFC3339 timestamps with an explicit zone are also accepted. The command persists the job and keeps the process running until send time. Keep the machine awake and the process open; this first version does not install a daemon or OS scheduler.
 
+## Queue and dispatch
+
+`queue` and `dispatch` send a batch over time from one account. They do not change `send`, `bulk`, `history`, or the other existing commands. A batch is a list of individually addressed emails. `dispatch` is a long-running process: it sends one email, waits, then sends the next.
+
+The gap is per account, not per batch. One lock file stops a second `dispatch` process for that account from sending at all. If a scheduled time is already in the past, that email goes out as soon as the gap allows, and every later email keeps the same spacing from that point. Past-due mail is not skipped and it is not sent in a burst.
+
+```sh
+mailsend --account sunbeam queue add --file india.json
+mailsend --account sunbeam dispatch \
+  --interval 5m \
+  --daily-cap 95 \
+  --timezone Asia/Kolkata \
+  --hold /var/lib/outbound/SEND_HOLD \
+  --hold-step fu-d3,fu-d7,ooo=/var/lib/outbound/FOLLOWUP_HOLD \
+  --hook ./scripts/mailsend-presend-hook \
+  --after-send ./scripts/mailsend-presend-hook
+```
+
+`--interval` is the minimum time between any two sends for the account. The default is 5 minutes. A batch interval longer than that is used when that batch's email is the one being sent. `--interval 0s` leaves only the batch interval. The daily cap counts every `sent` row for the account in the SQLite history, including ordinary `send` and `bulk` messages, inside the named timezone. At midnight the count resets and a waiting dispatcher continues. `0` means there is no cap unless a batch stored one.
+
+A hold file that exists pauses the dispatcher. The emails stay queued. `--hold` pauses everything. `--hold-step fu-d3,fu-d7,ooo=/path/FOLLOWUP_HOLD` pauses only emails whose `step` is one of those names, which is how a follow-up hold can leave first emails moving. Removing the file lets the dispatcher continue.
+
+Each email is stored as `sending` before the provider is called, and becomes `sent` only when Gmail or SMTP returns an id. History then shows that send, so the daily cap sees it. If the process dies in between, the next `dispatch` reconciles the open row:
+
+- history, Gmail Sent, or `--sent-check` proves it was accepted: it is marked `sent` and is not sent again
+- the check proves it was not accepted: it is tried again, up to three attempts
+- the check cannot decide: the email is `parked` and is not retried
+
+Gmail login for this CLI requests send access only, so a Gmail Sent search often cannot confirm a crashed send. Parked mail stays parked until someone checks the mailbox and runs `queue resolve`. `--sent-check` is an optional command that receives the same kind of JSON and prints `{"found": true, "message_id": "..."}` or `{"found": false}`. Exit 2 means it could not tell.
+
+```sh
+mailsend queue list
+mailsend queue status
+mailsend queue status <batch-id>
+mailsend queue cancel <batch-id>
+mailsend queue resolve <item-id> --sent --message-id <id>
+mailsend queue resolve <item-id> --retry
+mailsend queue resolve <item-id> --drop --reason "checked Sent; do not send"
+```
+
+`--json` on these commands prints one JSON object, same as `history` and `send`. `dispatch --json` prints a summary when the process stops. Progress lines go to stderr.
+
+### Batch file
+
+JSON object, JSON array, or CSV. Times without a zone use `--timezone` or the batch `timezone`. Emails without their own `at` are spaced from `start` by `interval` (default 5m). `body`, `body_file`, or `template` supplies the text. `{{name}}` is rendered when the batch is added, and the rendered text is what gets stored.
+
+```json
+{
+  "label": "India",
+  "start": "2026-10-21T09:00:00+05:30",
+  "interval": "5m",
+  "timezone": "Asia/Kolkata",
+  "daily_cap": 95,
+  "holds": [
+    {"path": "/var/lib/outbound/SEND_HOLD"},
+    {"path": "/var/lib/outbound/FOLLOWUP_HOLD", "steps": ["fu-d3", "fu-d7", "ooo"]}
+  ],
+  "emails": [
+    {"to": "ada@example.com", "subject": "Hello {{name}}", "body": "Hi {{name}}", "vars": {"name": "Ada"}, "step": "first", "tag": "in-1"},
+    {"to": "bao@example.com", "subject": "Following up", "body_file": "bao.txt", "step": "fu-d3", "at": "2026-10-21T09:40:00+05:30"}
+  ]
+}
+```
+
+```csv
+to,subject,body,step,tag,name
+ada@example.com,Hello {{name}},Hi {{name}},first,in-1,Ada
+```
+
+```sh
+mailsend queue add --file wave.csv --start "2026-10-21 09:00" --interval 5m --timezone Asia/Kolkata --account sunbeam
+```
+
+### Pre-send hook
+
+`--hook` runs before each send. The batch's own `hook` wins when it is set. The command receives one JSON object on stdin:
+
+```json
+{"account":"sunbeam","batch_id":"...","label":"India","email":"ada@example.com","subject":"Hello","step":"first","tag":"in-1","scheduled_at":"...","position":0}
+```
+
+Exit 0 allows the send. Any other exit blocks that email, stores the stderr (or stdout) as the reason, and the batch continues. The gap is not used for a blocked email. `--after-send` runs the same protocol after the provider id is stored, with `message_id` and `"status":"sent"` added. A failure there does not unsend the message.
+
+`scripts/mailsend-presend-hook` turns that JSON into a `fu-precheck.py` style invocation. Point `MAILSEND_PRECHECK` at the checker. It runs `check --reserve` before the send and `confirm --message-id` after. `MAILSEND_SLOT`, `MAILSEND_DEFAULT_KIND`, `MAILSEND_GMAIL_JSON`, and `MAILSEND_PRECHECK_NO_GMAIL=1` are optional. The script does not contain a machine-specific directory.
+
+### Keep the dispatcher running
+
+`dispatch` runs until the account has nothing left pending, or until it is stopped. A supervisor should start it again so a batch added later is picked up. An example unit is `scripts/mailsend-dispatch.service`; replace the paths, account, cap, and hook before installing it.
+
+```sh
+install -m 644 scripts/mailsend-dispatch.service /etc/systemd/system/mailsend-dispatch.service
+systemctl daemon-reload
+systemctl enable --now mailsend-dispatch.service
+```
+
+A shell loop does the same job with `--once`, which sends at most one due email and exits when the next email is in the future, a hold is present, or the cap is exhausted:
+
+```sh
+while true; do
+  mailsend --account sunbeam dispatch --once --interval 5m --daily-cap 95 --timezone Asia/Kolkata \
+    --hold "$OUTBOUND/SEND_HOLD" \
+    --hold-step "fu-d3,fu-d7,ooo=$OUTBOUND/FOLLOWUP_HOLD" \
+    --hook ./scripts/mailsend-presend-hook \
+    --after-send ./scripts/mailsend-presend-hook
+  sleep 15
+done
+```
+
+### Moving a slot sender
+
+A slot folder that used to run its own sender can become one batch, and one `dispatch` process replaces every regional sender.
+
+1. Build a JSON or CSV file from the slot queue. `to` is the recipient, `subject` and `body` (or `body_file`) are the note, and `step` is `first`, `fu-d3`, `fu-d7`, or `ooo`. Use `at` for a specific clock time, or `start` plus `interval` for a fixed spacing. The old random 3–7 minute pause is a fixed interval here; 5 minutes is the default.
+2. Stop the per-slot processes. Leave `SEND_HOLD` and `FOLLOWUP_HOLD` in place until you mean to send. Pass those paths to `--hold` and `--hold-step`. The dispatcher waits while the files exist.
+3. Set `--daily-cap 95 --timezone Asia/Kolkata` (or your own cap and zone). The cap includes mail already recorded by `send` and `bulk`.
+4. Point `--hook` and `--after-send` at `scripts/mailsend-presend-hook`, and set `MAILSEND_PRECHECK` to your checker. The checker still owns its ledger. mailsend's `sending` / `sent` rows are the record that prevents a duplicate after a crash.
+5. Run one dispatcher for the account, not one process per region. `queue status` shows parked rows. Inspect Sent, then `queue resolve --sent` or `--retry` or `--drop`. Do not delete a `sending` row to force a retry.
+
 ## Data and security
 
 - OAuth access and refresh tokens, and SMTP passwords, are stored in the OS keyring, never in the SQLite database, `accounts.json`, or logs. `logout` removes the token or password for that account.

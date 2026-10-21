@@ -64,6 +64,10 @@ CREATE INDEX IF NOT EXISTS recipients_status_idx ON recipients(job_id,status); C
 		db.Close()
 		return nil, err
 	}
+	if err = migrateQueue(db); err != nil {
+		db.Close()
+		return nil, err
+	}
 	_ = os.Chmod(path, 0600)
 	_ = os.Chmod(path+"-wal", 0600)
 	_ = os.Chmod(path+"-shm", 0600)
