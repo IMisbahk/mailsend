@@ -1,0 +1,83 @@
+#!/usr/bin/env python3
+"""Adapt mailsend's queue hook to a fu-precheck.py style checker.
+
+mailsend writes one JSON object to stdin before each send, and again after a
+confirmed send when the same command is configured as the after-send hook.
+
+Before send (no message_id):
+  python PRECHECK check EMAIL --kind KIND --slot SLOT --subject SUBJECT --json --reserve
+
+After send (message_id is set):
+  python PRECHECK confirm EMAIL --message-id ID --kind KIND --slot SLOT --subject SUBJECT
+
+The checker exit code is passed through. mailsend blocks the email when the
+pre-send command exits non-zero. An after-send failure is only logged.
+
+Environment (nothing here is tied to a particular machine):
+  MAILSEND_PRECHECK          path to the checker (required)
+  MAILSEND_PRECHECK_PYTHON   interpreter, default python3
+  MAILSEND_SLOT              --slot value; default is the batch label
+  MAILSEND_DEFAULT_KIND      kind used when step is empty; default first
+  MAILSEND_GMAIL_JSON        optional file passed as --gmail-json
+  MAILSEND_PRECHECK_NO_GMAIL set to 1 to add --no-gmail
+  MAILSEND_PRECHECK_EXTRA    extra arguments, split on spaces
+
+Kinds accepted from step: first, fu-d3, fu-d7, ooo, fu.
+"""
+import json
+import os
+import shlex
+import subprocess
+import sys
+
+KINDS = ("first", "fu-d3", "fu-d7", "ooo", "fu")
+
+
+def main():
+    raw = sys.stdin.read()
+    try:
+        payload = json.loads(raw) if raw.strip() else {}
+    except json.JSONDecodeError as exc:
+        print(f"hook payload is not JSON: {exc}", file=sys.stderr)
+        return 1
+    precheck = os.environ.get("MAILSEND_PRECHECK", "").strip()
+    if not precheck:
+        print("MAILSEND_PRECHECK is not set", file=sys.stderr)
+        return 1
+    email = str(payload.get("email") or "").strip()
+    if not email:
+        print("hook payload has no email", file=sys.stderr)
+        return 1
+    step = str(payload.get("step") or "").strip()
+    kind = step or os.environ.get("MAILSEND_DEFAULT_KIND", "first").strip() or "first"
+    if kind not in KINDS:
+        print(f"step {step!r} is not a precheck kind ({', '.join(KINDS)})", file=sys.stderr)
+        return 1
+    slot = os.environ.get("MAILSEND_SLOT", "").strip() or str(payload.get("label") or "").strip() or "queue"
+    subject = str(payload.get("subject") or "")
+    python = os.environ.get("MAILSEND_PRECHECK_PYTHON", "").strip() or "python3"
+    message_id = str(payload.get("message_id") or "").strip()
+    if message_id:
+        argv = [python, precheck, "confirm", email, "--message-id", message_id, "--kind", kind, "--slot", slot, "--subject", subject]
+    else:
+        argv = [python, precheck, "check", email, "--kind", kind, "--slot", slot, "--subject", subject, "--json", "--reserve"]
+    gmail_json = os.environ.get("MAILSEND_GMAIL_JSON", "").strip()
+    if gmail_json:
+        argv.extend(["--gmail-json", gmail_json])
+    if os.environ.get("MAILSEND_PRECHECK_NO_GMAIL", "").strip() == "1":
+        argv.append("--no-gmail")
+    extra = os.environ.get("MAILSEND_PRECHECK_EXTRA", "").strip()
+    if extra:
+        argv.extend(shlex.split(extra))
+    completed = subprocess.run(argv)
+    return completed.returncode
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except BrokenPipeError:
+        sys.exit(1)
+    except Exception as exc:
+        print(f"pre-send hook failed: {type(exc).__name__}: {exc}", file=sys.stderr)
+        sys.exit(1)

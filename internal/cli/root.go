@@ -50,7 +50,7 @@ func newRoot() *cobra.Command {
 	}
 	root.PersistentFlags().StringVar(&global.account, "account", "", "Named account (default: the current default account)")
 	root.PersistentFlags().BoolVar(&global.json, "json", false, "Write machine-readable JSON output")
-	root.AddCommand(loginCmd(), logoutCmd(), accountCmd(), sendCmd(), bulkCmd(), quotaCmd(), historyCmd(), templateCmd(), versionCmd())
+	root.AddCommand(loginCmd(), logoutCmd(), accountCmd(), sendCmd(), bulkCmd(), quotaCmd(), historyCmd(), templateCmd(), versionCmd(), queueCmd(), dispatchCmd())
 	return root
 }
 

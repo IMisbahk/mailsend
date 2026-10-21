@@ -1,0 +1,24 @@
+[Unit]
+Description=mailsend queue dispatcher
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=mailsend
+Environment=MAILSEND_CONFIG_DIR=/var/lib/mailsend
+Environment=MAILSEND_PRECHECK=/var/lib/outbound/fu-precheck.py
+Environment=MAILSEND_SLOT=outbound
+ExecStart=/usr/local/bin/mailsend --account sunbeam dispatch \
+  --interval 5m \
+  --daily-cap 95 \
+  --timezone Asia/Kolkata \
+  --hold /var/lib/outbound/SEND_HOLD \
+  --hold-step fu-d3,fu-d7,ooo=/var/lib/outbound/FOLLOWUP_HOLD \
+  --hook /usr/local/bin/mailsend-presend-hook \
+  --after-send /usr/local/bin/mailsend-presend-hook
+Restart=always
+RestartSec=15
+
+[Install]
+WantedBy=multi-user.target
