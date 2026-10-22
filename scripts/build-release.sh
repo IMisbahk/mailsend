@@ -3,7 +3,7 @@ set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$root"
-version="${VERSION:-dev}"
+version="${VERSION:-0.2.0}"
 out="${OUTPUT_DIR:-$root/build/release}"
 mkdir -p "$out"
 

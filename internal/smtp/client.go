@@ -245,6 +245,12 @@ func New(cfg Config) (*Client, error) {
 	return &Client{cfg: normalized}, nil
 }
 
+// ClientTLSConfig verifies the named host. MAILSEND_SMTP_CA_FILE adds a
+// private CA. Certificate verification cannot be disabled.
+func ClientTLSConfig(host string) (*tls.Config, error) {
+	return loadTLSConfig(host)
+}
+
 func loadTLSConfig(host string) (*tls.Config, error) {
 	cfg := &tls.Config{ServerName: host, MinVersion: tls.VersionTLS12}
 	path := strings.TrimSpace(os.Getenv("MAILSEND_SMTP_CA_FILE"))

@@ -21,7 +21,7 @@ func accountCmd() *cobra.Command {
 			return accountShow(cmd)
 		},
 	}
-	cmd.AddCommand(accountAddCmd(), accountTestCmd())
+	cmd.AddCommand(accountAddCmd(), accountSetIMAPCmd(), accountTestCmd())
 	return cmd
 }
 
@@ -51,9 +51,18 @@ func accountShow(cmd *cobra.Command) error {
 			"reply_to":        cfg.ReplyTo,
 			"authenticated":   true,
 			"password_stored": true,
+			"imap_configured": false,
+		}
+		imapLine := "IMAP: not configured"
+		if endpoint, ok := cfg.IMAP(); ok {
+			value["imap_configured"] = true
+			value["imap"] = map[string]any{
+				"host": endpoint.Host, "port": endpoint.Port, "tls": endpoint.TLS, "username": endpoint.Username,
+			}
+			imapLine = fmt.Sprintf("IMAP: %s:%d %s as %s", endpoint.Host, endpoint.Port, endpoint.TLS, endpoint.Username)
 		}
 		return output(value, func() {
-			fmt.Printf("Account: %s\nProvider: smtp\nFrom: %s\nHost: %s\nPort: %d\nTLS: %s\nUsername: %s\nReply-To: %s\nPassword: stored in the OS keychain\n", name, cfg.From, cfg.Host, cfg.Port, cfg.TLS, cfg.Username, replyTo)
+			fmt.Printf("Account: %s\nProvider: smtp\nFrom: %s\nHost: %s\nPort: %d\nTLS: %s\nUsername: %s\nReply-To: %s\n%s\nPassword: stored in the OS keychain\n", name, cfg.From, cfg.Host, cfg.Port, cfg.TLS, cfg.Username, replyTo, imapLine)
 		})
 	}
 	auth.Debugf("account: loading %s", name)
@@ -110,6 +119,7 @@ func accountAddCmd() *cobra.Command {
 	var provider, host, tlsMode, username, from, replyTo string
 	var port int
 	var passwordStdin bool
+	var imapFlags imapCLIFlags
 	cmd := &cobra.Command{
 		Use:   "add <name>",
 		Short: "Add or update an SMTP account",
@@ -117,8 +127,11 @@ func accountAddCmd() *cobra.Command {
 
 Read the password from an interactive prompt, from stdin with --password-stdin, or from the MAILSEND_SMTP_PASSWORD environment variable.
 
+Optional IMAP flags store the mailbox server in the same account. --imap-host defaults to the SMTP host, --imap-port to 993, --imap-tls to ssl, and --imap-username to the SMTP username. The SMTP password is reused. To enable IMAP on an account that already has a password, use mailsend account set-imap.
+
 Example:
-  mailsend account add sunbeam-smtp --provider smtp --host mail.example.com --port 587 --tls starttls --username misbah@sunbeam.agency --from misbah@sunbeam.agency`,
+  mailsend account add sunbeam-smtp --provider smtp --host mail.example.com --port 587 --tls starttls --username misbah@sunbeam.agency --from misbah@sunbeam.agency
+  mailsend account set-imap gobitsnbytes`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			switch strings.ToLower(strings.TrimSpace(provider)) {
@@ -137,6 +150,15 @@ Example:
 			if cmd.Flags().Changed("port") && (port < 1 || port > 65535) {
 				return fmt.Errorf("invalid SMTP port %d", port)
 			}
+			var existing auth.ProviderConfig
+			if looked, lookupErr := auth.LookupProvider(args[0]); lookupErr == nil && looked.Provider == auth.ProviderSMTP {
+				existing = looked
+			}
+			imapCfg := resolveIMAPFlags(cmd, imapFlags, cfg.Host, cfg.Username, existing, false)
+			cfg.IMAPHost = imapCfg.IMAPHost
+			cfg.IMAPPort = imapCfg.IMAPPort
+			cfg.IMAPTLS = imapCfg.IMAPTLS
+			cfg.IMAPUsername = imapCfg.IMAPUsername
 			password, err := readSMTPPassword(cmd, passwordStdin)
 			if err != nil {
 				return err
@@ -145,11 +167,18 @@ Example:
 			if err != nil {
 				return err
 			}
-			return output(map[string]any{
+			result := map[string]any{
 				"status": status, "account": args[0], "provider": auth.ProviderSMTP,
 				"host": cfg.Host, "port": cfg.Port, "tls": cfg.TLS, "username": cfg.Username, "from": cfg.From, "reply_to": cfg.ReplyTo,
-			}, func() {
+			}
+			if endpoint, ok := cfg.IMAP(); ok {
+				result["imap"] = map[string]any{"host": endpoint.Host, "port": endpoint.Port, "tls": endpoint.TLS, "username": endpoint.Username}
+			}
+			return output(result, func() {
 				fmt.Printf("%s SMTP account %s (%s) via %s:%d %s\n", strings.ToUpper(status[:1])+status[1:], args[0], cfg.From, cfg.Host, cfg.Port, cfg.TLS)
+				if endpoint, ok := cfg.IMAP(); ok {
+					fmt.Printf("IMAP: %s:%d %s as %s\n", endpoint.Host, endpoint.Port, endpoint.TLS, endpoint.Username)
+				}
 			})
 		},
 	}
@@ -161,6 +190,59 @@ Example:
 	cmd.Flags().StringVar(&from, "from", "", "From address, for example misbah@sunbeam.agency")
 	cmd.Flags().StringVar(&replyTo, "reply-to", "", "Optional default Reply-To address")
 	cmd.Flags().BoolVar(&passwordStdin, "password-stdin", false, "Read the SMTP password from stdin")
+	addIMAPFlags(cmd, &imapFlags)
+	return cmd
+}
+
+func accountSetIMAPCmd() *cobra.Command {
+	var imapFlags imapCLIFlags
+	cmd := &cobra.Command{
+		Use:   "set-imap <name>",
+		Short: "Enable or update IMAP on an SMTP account",
+		Long: `Store IMAP settings on an existing SMTP account without changing the keychain password.
+
+The password already stored for SMTP is reused. Omit a flag to keep the current value, or to use the default when IMAP is not configured yet. Defaults are the SMTP host, port 993, TLS mode ssl, and the SMTP username.
+
+Example:
+  mailsend account set-imap gobitsnbytes
+  mailsend account set-imap gobitsnbytes --imap-host mail.gobitsnbytes.org --imap-port 993 --imap-tls ssl`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := auth.ValidateAccountName(args[0]); err != nil {
+				return err
+			}
+			existing, err := auth.LookupProvider(args[0])
+			if err != nil {
+				return err
+			}
+			if existing.Provider != auth.ProviderSMTP {
+				return fmt.Errorf("account %q is not an SMTP account; add it with mailsend account add --provider smtp", args[0])
+			}
+			imapCfg := resolveIMAPFlags(cmd, imapFlags, existing.Host, existing.Username, existing, true)
+			if err = auth.SetIMAP(args[0], imapCfg); err != nil {
+				return err
+			}
+			saved, err := auth.LookupProvider(args[0])
+			if err != nil {
+				return err
+			}
+			endpoint, ok := saved.IMAP()
+			if !ok {
+				return fmt.Errorf("IMAP settings were not saved")
+			}
+			status := "enabled"
+			if existing.IMAPHost != "" {
+				status = "updated"
+			}
+			return output(map[string]any{
+				"status": status, "account": args[0], "provider": auth.ProviderSMTP,
+				"imap_host": endpoint.Host, "imap_port": endpoint.Port, "imap_tls": endpoint.TLS, "imap_username": endpoint.Username,
+			}, func() {
+				fmt.Printf("IMAP %s for %s at %s:%d %s as %s\nPassword: reused from the OS keychain\n", status, args[0], endpoint.Host, endpoint.Port, endpoint.TLS, endpoint.Username)
+			})
+		},
+	}
+	addIMAPFlags(cmd, &imapFlags)
 	return cmd
 }
 
@@ -169,7 +251,7 @@ func accountTestCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "test [name]",
 		Short: "Check that an account can authenticate",
-		Long:  "For an SMTP account, connects, negotiates TLS, and authenticates without sending. For a Gmail account, checks the OAuth token with Google. --send-to delivers one test message and records it in history.",
+		Long:  "For an SMTP account, connects, negotiates TLS, and authenticates without sending. When that account has IMAP settings, the same command also logs in over IMAP and logs out without opening a mailbox. SMTP and IMAP results are reported separately. For a Gmail account, checks the OAuth token with Google. --send-to delivers one test message and records it in history.",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := selectedAccount()
@@ -192,6 +274,14 @@ func accountTestCmd() *cobra.Command {
 			sender, err := openSender(ctx, name)
 			if err != nil {
 				return err
+			}
+			if sender.Provider() == auth.ProviderSMTP {
+				cfg, lookupErr := auth.LookupProvider(name)
+				if lookupErr == nil {
+					if _, ok := cfg.IMAP(); ok {
+						return accountTestSMTPAndIMAP(ctx, name, sender, cfg, sendTo, recipients)
+					}
+				}
 			}
 			if err = sender.Probe(ctx); err != nil {
 				return err
@@ -220,6 +310,142 @@ func accountTestCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&sendTo, "send-to", "", "After authentication succeeds, send one test message to this address")
 	return cmd
+}
+
+type imapCLIFlags struct {
+	host, tlsMode, username string
+	port                    int
+}
+
+func addIMAPFlags(cmd *cobra.Command, flags *imapCLIFlags) {
+	cmd.Flags().StringVar(&flags.host, "imap-host", "", "IMAP server hostname (default: the SMTP host)")
+	cmd.Flags().IntVar(&flags.port, "imap-port", 0, "IMAP port (default 993)")
+	cmd.Flags().StringVar(&flags.tlsMode, "imap-tls", "", "IMAP TLS mode: ssl, starttls, or none (default ssl)")
+	cmd.Flags().StringVar(&flags.username, "imap-username", "", "IMAP username (default: the SMTP username)")
+}
+
+func imapFlagsRequested(cmd *cobra.Command) bool {
+	return cmd.Flags().Changed("imap-host") || cmd.Flags().Changed("imap-port") || cmd.Flags().Changed("imap-tls") || cmd.Flags().Changed("imap-username")
+}
+
+func resolveIMAPFlags(cmd *cobra.Command, flags imapCLIFlags, smtpHost, smtpUser string, existing auth.ProviderConfig, force bool) auth.ProviderConfig {
+	if !force && !imapFlagsRequested(cmd) {
+		return auth.ProviderConfig{
+			IMAPHost: existing.IMAPHost, IMAPPort: existing.IMAPPort, IMAPTLS: existing.IMAPTLS, IMAPUsername: existing.IMAPUsername,
+		}
+	}
+	host := existing.IMAPHost
+	if cmd.Flags().Changed("imap-host") {
+		host = strings.TrimSpace(flags.host)
+	}
+	if host == "" {
+		host = smtpHost
+	}
+	port := existing.IMAPPort
+	if cmd.Flags().Changed("imap-port") {
+		port = flags.port
+	}
+	if port == 0 {
+		port = 993
+	}
+	tlsMode := existing.IMAPTLS
+	if cmd.Flags().Changed("imap-tls") {
+		tlsMode = strings.TrimSpace(flags.tlsMode)
+	}
+	if tlsMode == "" {
+		tlsMode = smtp.TLSSSL
+	}
+	username := existing.IMAPUsername
+	if cmd.Flags().Changed("imap-username") {
+		username = strings.TrimSpace(flags.username)
+	}
+	if username == "" {
+		username = smtpUser
+	}
+	return auth.ProviderConfig{IMAPHost: host, IMAPPort: port, IMAPTLS: tlsMode, IMAPUsername: username}
+}
+
+func accountTestSMTPAndIMAP(ctx context.Context, name string, sender mailSender, cfg auth.ProviderConfig, sendTo string, recipients []string) error {
+	endpoint, _ := cfg.IMAP()
+	smtpErr := sender.Probe(ctx)
+	imapClient, imapErr := openIMAPClient(name)
+	if imapErr == nil {
+		imapErr = imapClient.CheckLogin(ctx)
+	}
+	smtpStatus := "ok"
+	imapStatus := "ok"
+	if smtpErr != nil {
+		smtpStatus = "failed"
+	}
+	if imapErr != nil {
+		imapStatus = "failed"
+	}
+	status := "ok"
+	if smtpErr != nil || imapErr != nil {
+		status = "failed"
+	}
+	smtpResult := map[string]any{"status": smtpStatus, "host": cfg.Host, "port": cfg.Port, "tls": cfg.TLS}
+	imapResult := map[string]any{"status": imapStatus, "host": endpoint.Host, "port": endpoint.Port, "tls": endpoint.TLS, "username": endpoint.Username}
+	var warnings []string
+	if cfg.TLS == smtp.TLSNone {
+		warning := "Connected without TLS. The password was sent in cleartext because this account uses --tls none."
+		smtpResult["warning"] = warning
+		warnings = append(warnings, warning)
+	}
+	if endpoint.TLS == smtp.TLSNone {
+		warning := "IMAP connected without TLS. The password was sent in cleartext because this account uses --imap-tls none."
+		imapResult["warning"] = warning
+		warnings = append(warnings, warning)
+	}
+	if smtpErr != nil {
+		smtpResult["error"] = smtpErr.Error()
+	}
+	if imapErr != nil {
+		imapResult["error"] = imapErr.Error()
+	}
+	value := map[string]any{
+		"status": status, "account": name, "provider": auth.ProviderSMTP, "from": sender.FromAddress(),
+		"authenticated": smtpErr == nil && imapErr == nil, "smtp": smtpResult, "imap": imapResult,
+	}
+	if len(warnings) > 0 {
+		value["warning"] = strings.Join(warnings, " ")
+	}
+	if err := output(value, func() {
+		fmt.Printf("SMTP: %s\n", checkLine(smtpStatus, fmt.Sprintf("%s:%d %s", cfg.Host, cfg.Port, cfg.TLS), smtpErr))
+		fmt.Printf("IMAP: %s\n", checkLine(imapStatus, fmt.Sprintf("%s:%d %s as %s", endpoint.Host, endpoint.Port, endpoint.TLS, endpoint.Username), imapErr))
+		for _, warning := range warnings {
+			fmt.Println(warning)
+		}
+		if status == "ok" && sendTo == "" {
+			fmt.Println("No message was sent.")
+		}
+	}); err != nil {
+		return err
+	}
+	if smtpErr != nil && imapErr != nil {
+		return fmt.Errorf("SMTP: %v; IMAP: %v", smtpErr, imapErr)
+	}
+	if smtpErr != nil {
+		return fmt.Errorf("SMTP: %v", smtpErr)
+	}
+	if imapErr != nil {
+		return fmt.Errorf("IMAP: %v", imapErr)
+	}
+	if sendTo == "" {
+		return nil
+	}
+	msg := mailmsg.Message{To: recipients, Subject: "mailsend connectivity test", Text: "This is a mailsend connectivity test. No action is required."}
+	return sendOne(ctx, sender, name, msg, "test")
+}
+
+func checkLine(status, detail string, err error) string {
+	if err != nil {
+		return fmt.Sprintf("failed (%s): %s", detail, err.Error())
+	}
+	if status == "ok" {
+		return "authenticated " + detail
+	}
+	return status + " " + detail
 }
 
 func quotaCmd() *cobra.Command {

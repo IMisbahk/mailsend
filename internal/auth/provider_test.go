@@ -125,6 +125,78 @@ func TestSMTPPasswordStaysOutOfConfig(t *testing.T) {
 	}
 }
 
+func TestSetIMAPReusesPasswordAndLeavesLegacyFile(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("MAILSEND_CONFIG_DIR", dir)
+	keyring.MockInit()
+	original := []byte("{\n  \"default\": \"sunbeam\",\n  \"accounts\": [\"sunbeam\"],\n  \"emails\": {\n    \"sunbeam\": \"misbah@sunbeam.agency\"\n  }\n}")
+	path := filepath.Join(dir, "accounts.json")
+	if err := os.WriteFile(path, original, 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LookupProvider("sunbeam")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := cfg.IMAP(); ok {
+		t.Fatal("legacy account looked like it had IMAP")
+	}
+	got, err := os.ReadFile(path)
+	if err != nil || string(got) != string(original) {
+		t.Fatalf("reading IMAP settings rewrote accounts.json:\n%s", got)
+	}
+	if err = SetIMAP("sunbeam", ProviderConfig{IMAPHost: "mail.example.com"}); err == nil {
+		t.Fatal("expected set-imap to refuse a Gmail account")
+	}
+	const password = "mailbox-secret-value"
+	if _, err = SaveSMTPAccount("gobitsnbytes", ProviderConfig{
+		Host: "mail.gobitsnbytes.org", Port: 587, TLS: "starttls", Username: "ada@gobitsnbytes.org", From: "ada@gobitsnbytes.org",
+	}, password); err != nil {
+		t.Fatal(err)
+	}
+	// The CLI fills the SMTP host before calling SetIMAP. An empty config is
+	// not IMAP. Port, TLS, and username still default when only the host is set.
+	if err = SetIMAP("gobitsnbytes", ProviderConfig{IMAPHost: "mail.gobitsnbytes.org"}); err != nil {
+		t.Fatal(err)
+	}
+	saved, err := LookupProvider("gobitsnbytes")
+	if err != nil {
+		t.Fatal(err)
+	}
+	endpoint, ok := saved.IMAP()
+	if !ok || endpoint.Host != "mail.gobitsnbytes.org" || endpoint.Port != 993 || endpoint.TLS != "ssl" || endpoint.Username != "ada@gobitsnbytes.org" {
+		t.Fatalf("imap endpoint %+v ok %v", endpoint, ok)
+	}
+	if storedPassword, passwordErr := SMTPPassword("gobitsnbytes"); passwordErr != nil || storedPassword != password {
+		t.Fatalf("password changed to %q (%v)", storedPassword, passwordErr)
+	}
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(body), password) {
+		t.Fatalf("password leaked into config: %s", body)
+	}
+	if _, err = SaveSMTPAccount("gobitsnbytes", ProviderConfig{
+		Host: "mail.gobitsnbytes.org", Port: 587, TLS: "starttls", Username: "ada@gobitsnbytes.org", From: "ada@gobitsnbytes.org",
+		IMAPHost: saved.IMAPHost, IMAPPort: saved.IMAPPort, IMAPTLS: saved.IMAPTLS, IMAPUsername: saved.IMAPUsername,
+	}, "rotated-secret"); err != nil {
+		t.Fatal(err)
+	}
+	saved, err = LookupProvider("gobitsnbytes")
+	if err != nil {
+		t.Fatal(err)
+	}
+	endpoint, ok = saved.IMAP()
+	if !ok || endpoint.Port != 993 || endpoint.TLS != "ssl" {
+		t.Fatalf("password rotation dropped IMAP: %+v", saved)
+	}
+	sunbeam, err := LookupProvider("sunbeam")
+	if err != nil || sunbeam.Provider != ProviderGmail || DefaultAccount() != "sunbeam" {
+		t.Fatalf("sunbeam %+v default %s err %v", sunbeam, DefaultAccount(), err)
+	}
+}
+
 func TestLegacyManifestSurvivesSMTPAccount(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("MAILSEND_CONFIG_DIR", dir)

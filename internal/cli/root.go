@@ -30,7 +30,7 @@ type options struct {
 }
 
 var global options
-var version = "dev"
+var version = "0.2.0"
 
 func Execute() int {
 	root := newRoot()
@@ -69,7 +69,7 @@ func (s *statusExit) Error() string {
 func (s *statusExit) Unwrap() error { return s.err }
 func newRoot() *cobra.Command {
 	global = options{}
-	root := &cobra.Command{Use: "mailsend", Short: "Send email from your terminal", Long: "mailsend is a local email client. Gmail accounts send through the Gmail API with OAuth. SMTP accounts send through the server configured for that account. Tokens and SMTP passwords stay in the operating system keychain, and send history stays in a local SQLite database.", SilenceUsage: true, SilenceErrors: true}
+	root := &cobra.Command{Use: "mailsend", Short: "Send email from your terminal", Long: "mailsend is a local email client. Gmail accounts send through the Gmail API with OAuth. SMTP accounts send through the server configured for that account. SMTP accounts with IMAP can list and read mail; listing uses EXAMINE and BODY.PEEK so messages stay unread. Tokens and SMTP passwords stay in the operating system keychain, and send history stays in a local SQLite database.", SilenceUsage: true, SilenceErrors: true}
 	root.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
 		if global.debug {
 			auth.SetDebug(commandStderr)
@@ -84,7 +84,7 @@ func newRoot() *cobra.Command {
 	root.PersistentFlags().StringVar(&global.account, "account", "", "Named account (default: the current default account)")
 	root.PersistentFlags().BoolVar(&global.json, "json", false, "Write machine-readable JSON output")
 	root.PersistentFlags().BoolVar(&global.debug, "debug", false, "Write a step trace to stderr")
-	root.AddCommand(loginCmd(), logoutCmd(), accountCmd(), sendCmd(), bulkCmd(), quotaCmd(), historyCmd(), templateCmd(), versionCmd(), queueCmd(), dispatchCmd(), sentCheckCmd())
+	root.AddCommand(loginCmd(), logoutCmd(), accountCmd(), sendCmd(), bulkCmd(), quotaCmd(), historyCmd(), templateCmd(), versionCmd(), queueCmd(), dispatchCmd(), sentCheckCmd(), inboxCmd(), readCmd())
 	return root
 }
 

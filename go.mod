@@ -3,6 +3,7 @@ module github.com/IMisbahk/mailsend
 go 1.23
 
 require (
+	github.com/emersion/go-imap/v2 v2.0.0-beta.8
 	github.com/gofrs/flock v0.12.1
 	github.com/spf13/cobra v1.8.1
 	github.com/zalando/go-keyring v0.2.6
@@ -15,6 +16,8 @@ require (
 	al.essio.dev/pkg/shellescape v1.5.1 // indirect
 	github.com/danieljoos/wincred v1.2.2 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
+	github.com/emersion/go-message v0.18.2 // indirect
+	github.com/emersion/go-sasl v0.0.0-20241020182733-b788ff22d5a6 // indirect
 	github.com/godbus/dbus/v5 v5.1.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
