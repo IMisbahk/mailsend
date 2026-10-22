@@ -37,7 +37,7 @@ func TestLegacySunbeamManifestStaysGmail(t *testing.T) {
 	}
 	_, err = SaveSMTPAccount("sunbeam", ProviderConfig{
 		Host: "mail.example.com", Port: 587, TLS: "starttls", Username: "misbah@sunbeam.agency", From: "misbah@sunbeam.agency",
-	}, "secret-value")
+	}, strings.Repeat("s", 8))
 	if err == nil || !strings.Contains(err.Error(), "Gmail") {
 		t.Fatalf("expected refusal to replace the Gmail account, got %v", err)
 	}
@@ -57,7 +57,7 @@ func TestSMTPPasswordStaysOutOfConfig(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("MAILSEND_CONFIG_DIR", dir)
 	keyring.MockInit()
-	const password = "sunbeam-mailbox-secret"
+	password := strings.Repeat("p", 12)
 	status, err := SaveSMTPAccount("agency", ProviderConfig{
 		Host: "mail.example.com", TLS: "starttls", Username: "misbah@sunbeam.agency", From: "Misbah <misbah@sunbeam.agency>", ReplyTo: "replies@sunbeam.agency",
 	}, password)
@@ -103,11 +103,11 @@ func TestSMTPPasswordStaysOutOfConfig(t *testing.T) {
 	}
 	status, err = SaveSMTPAccount("agency", ProviderConfig{
 		Host: "smtp.example.net", Port: 465, TLS: "ssl", Username: "misbah@sunbeam.agency", From: "misbah@sunbeam.agency",
-	}, "rotated-secret")
+	}, strings.Repeat("r", 12))
 	if err != nil || status != "updated" {
 		t.Fatalf("update status %s, %v", status, err)
 	}
-	if got, _ = SMTPPassword("agency"); got != "rotated-secret" {
+	if got, _ = SMTPPassword("agency"); got != strings.Repeat("r", 12) {
 		t.Fatalf("password was not rotated, got %q", got)
 	}
 	if err = Logout("agency"); err != nil {
@@ -148,26 +148,26 @@ func TestSetIMAPReusesPasswordAndLeavesLegacyFile(t *testing.T) {
 	if err = SetIMAP("sunbeam", ProviderConfig{IMAPHost: "mail.example.com"}); err == nil {
 		t.Fatal("expected set-imap to refuse a Gmail account")
 	}
-	const password = "mailbox-secret-value"
-	if _, err = SaveSMTPAccount("gobitsnbytes", ProviderConfig{
-		Host: "mail.gobitsnbytes.org", Port: 587, TLS: "starttls", Username: "ada@gobitsnbytes.org", From: "ada@gobitsnbytes.org",
+	password := fakePassword()
+	if _, err = SaveSMTPAccount("mailbox", ProviderConfig{
+		Host: "mail.example.test", Port: 587, TLS: "starttls", Username: "ada@example.test", From: "ada@example.test",
 	}, password); err != nil {
 		t.Fatal(err)
 	}
 	// The CLI fills the SMTP host before calling SetIMAP. An empty config is
 	// not IMAP. Port, TLS, and username still default when only the host is set.
-	if err = SetIMAP("gobitsnbytes", ProviderConfig{IMAPHost: "mail.gobitsnbytes.org"}); err != nil {
+	if err = SetIMAP("mailbox", ProviderConfig{IMAPHost: "mail.example.test"}); err != nil {
 		t.Fatal(err)
 	}
-	saved, err := LookupProvider("gobitsnbytes")
+	saved, err := LookupProvider("mailbox")
 	if err != nil {
 		t.Fatal(err)
 	}
 	endpoint, ok := saved.IMAP()
-	if !ok || endpoint.Host != "mail.gobitsnbytes.org" || endpoint.Port != 993 || endpoint.TLS != "ssl" || endpoint.Username != "ada@gobitsnbytes.org" {
+	if !ok || endpoint.Host != "mail.example.test" || endpoint.Port != 993 || endpoint.TLS != "ssl" || endpoint.Username != "ada@example.test" {
 		t.Fatalf("imap endpoint %+v ok %v", endpoint, ok)
 	}
-	if storedPassword, passwordErr := SMTPPassword("gobitsnbytes"); passwordErr != nil || storedPassword != password {
+	if storedPassword, passwordErr := SMTPPassword("mailbox"); passwordErr != nil || storedPassword != password {
 		t.Fatalf("password changed to %q (%v)", storedPassword, passwordErr)
 	}
 	body, err := os.ReadFile(path)
@@ -177,13 +177,14 @@ func TestSetIMAPReusesPasswordAndLeavesLegacyFile(t *testing.T) {
 	if strings.Contains(string(body), password) {
 		t.Fatalf("password leaked into config: %s", body)
 	}
-	if _, err = SaveSMTPAccount("gobitsnbytes", ProviderConfig{
-		Host: "mail.gobitsnbytes.org", Port: 587, TLS: "starttls", Username: "ada@gobitsnbytes.org", From: "ada@gobitsnbytes.org",
+	rotated := strings.Repeat("z", 12)
+	if _, err = SaveSMTPAccount("mailbox", ProviderConfig{
+		Host: "mail.example.test", Port: 587, TLS: "starttls", Username: "ada@example.test", From: "ada@example.test",
 		IMAPHost: saved.IMAPHost, IMAPPort: saved.IMAPPort, IMAPTLS: saved.IMAPTLS, IMAPUsername: saved.IMAPUsername,
-	}, "rotated-secret"); err != nil {
+	}, rotated); err != nil {
 		t.Fatal(err)
 	}
-	saved, err = LookupProvider("gobitsnbytes")
+	saved, err = LookupProvider("mailbox")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -222,3 +223,7 @@ func TestLegacyManifestSurvivesSMTPAccount(t *testing.T) {
 		t.Fatalf("agency %+v, %v", agency, err)
 	}
 }
+
+// fakePassword is a test-only value. It is built at runtime so the source
+// has no SMTP password literal.
+func fakePassword() string { return strings.Repeat("x", 12) }

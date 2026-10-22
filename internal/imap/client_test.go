@@ -51,15 +51,15 @@ func TestChooseSentMailboxOrder(t *testing.T) {
 func TestCheckLoginModesDoNotSelect(t *testing.T) {
 	for _, mode := range []string{imapfake.ModeSSL, imapfake.ModeStartTLS, imapfake.ModeNone} {
 		t.Run(mode, func(t *testing.T) {
-			server := startIMAP(t, mode, "user", "mailbox-secret-value")
-			client := testClient(t, server, mode, "mailbox-secret-value")
+			server := startIMAP(t, mode, "user", fakePassword())
+			client := testClient(t, server, mode, fakePassword())
 			var trace bytes.Buffer
 			client.protocolTrace = &trace
 			if err := client.CheckLogin(context.Background()); err != nil {
 				t.Fatal(err)
 			}
-			logged := strings.ReplaceAll(trace.String(), "mailbox-secret-value", "[redacted]")
-			if strings.Contains(logged, "mailbox-secret-value") {
+			logged := strings.ReplaceAll(trace.String(), fakePassword(), "[redacted]")
+			if strings.Contains(logged, fakePassword()) {
 				t.Fatal("password remained in the redacted trace")
 			}
 			if !traceHasCommand(trace.String(), "LOGIN") || !traceHasCommand(trace.String(), "LOGOUT") {
@@ -73,16 +73,16 @@ func TestCheckLoginModesDoNotSelect(t *testing.T) {
 }
 
 func TestCheckLoginFailureDoesNotEchoPassword(t *testing.T) {
-	server := startIMAP(t, imapfake.ModeSSL, "user", "other-password")
-	client := testClient(t, server, imapfake.ModeSSL, "mailbox-secret-value")
+	server := startIMAP(t, imapfake.ModeSSL, "user", strings.Repeat("y", 12))
+	client := testClient(t, server, imapfake.ModeSSL, fakePassword())
 	err := client.CheckLogin(context.Background())
-	if err == nil || strings.Contains(err.Error(), "mailbox-secret-value") {
+	if err == nil || strings.Contains(err.Error(), fakePassword()) {
 		t.Fatalf("error %v", err)
 	}
 }
 
 func TestListDoesNotMarkReadAndSortsByDate(t *testing.T) {
-	server := startIMAP(t, imapfake.ModeSSL, "user", "mailbox-secret-value")
+	server := startIMAP(t, imapfake.ModeSSL, "user", fakePassword())
 	older := time.Now().Add(-48 * time.Hour).UTC().Truncate(time.Second)
 	newer := time.Now().Add(-2 * time.Hour).UTC().Truncate(time.Second)
 	if _, err := server.Append("INBOX", plainMessage("Newer <newer@example.com>", "Ada <ada@example.com>", "First stored", "newer body", newer), newer, nil); err != nil {
@@ -97,14 +97,14 @@ func TestListDoesNotMarkReadAndSortsByDate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	client := testClient(t, server, imapfake.ModeSSL, "mailbox-secret-value")
+	client := testClient(t, server, imapfake.ModeSSL, fakePassword())
 	var trace bytes.Buffer
 	client.protocolTrace = &trace
 	listed, err := client.List(context.Background(), ListQuery{Limit: 10, Since: time.Now().Add(-7 * 24 * time.Hour)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	logged := strings.ReplaceAll(trace.String(), "mailbox-secret-value", "[redacted]")
+	logged := strings.ReplaceAll(trace.String(), fakePassword(), "[redacted]")
 	if err = assertPeekOnly(logged); err != nil {
 		t.Fatalf("list protocol: %v\n%s", err, logged)
 	}
@@ -140,7 +140,7 @@ func TestListDoesNotMarkReadAndSortsByDate(t *testing.T) {
 }
 
 func TestReadPlainHTMLAndAttachment(t *testing.T) {
-	server := startIMAP(t, imapfake.ModeSSL, "user", "mailbox-secret-value")
+	server := startIMAP(t, imapfake.ModeSSL, "user", fakePassword())
 	when := time.Now().Add(-time.Hour).UTC().Truncate(time.Second)
 	uid, err := server.Append("INBOX", mixedMessage(), when, nil)
 	if err != nil {
@@ -150,14 +150,14 @@ func TestReadPlainHTMLAndAttachment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	client := testClient(t, server, imapfake.ModeSSL, "mailbox-secret-value")
+	client := testClient(t, server, imapfake.ModeSSL, fakePassword())
 	var trace bytes.Buffer
 	client.protocolTrace = &trace
 	message, err := client.Read(context.Background(), "INBOX", uid, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	logged := strings.ReplaceAll(trace.String(), "mailbox-secret-value", "[redacted]")
+	logged := strings.ReplaceAll(trace.String(), fakePassword(), "[redacted]")
 	if err = assertPeekOnly(logged); err != nil {
 		t.Fatalf("read protocol: %v\n%s", err, logged)
 	}
@@ -180,7 +180,7 @@ func TestReadPlainHTMLAndAttachment(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !marked.MarkedRead || !traceHasCommand(trace.String(), "STORE") {
-		t.Fatalf("mark read %#v\n%s", marked, strings.ReplaceAll(trace.String(), "mailbox-secret-value", "[redacted]"))
+		t.Fatalf("mark read %#v\n%s", marked, strings.ReplaceAll(trace.String(), fakePassword(), "[redacted]"))
 	}
 	checked, err := client.Read(context.Background(), "INBOX", uid, false)
 	if err != nil || !checked.Seen || checked.MarkedRead {
@@ -189,7 +189,7 @@ func TestReadPlainHTMLAndAttachment(t *testing.T) {
 }
 
 func TestSearchSentSpecialUseAndFallback(t *testing.T) {
-	server := startIMAP(t, imapfake.ModeSSL, "user", "mailbox-secret-value")
+	server := startIMAP(t, imapfake.ModeSSL, "user", fakePassword())
 	if err := server.CreateMailbox("Gesendet"); err != nil {
 		t.Fatal(err)
 	}
@@ -207,7 +207,7 @@ func TestSearchSentSpecialUseAndFallback(t *testing.T) {
 	if _, err = server.Append("Sent", plainMessage("Me <me@example.com>", "Ada <ada@example.com>", "Wrong folder", "nope", when), when, nil); err != nil {
 		t.Fatal(err)
 	}
-	client := testClient(t, server, imapfake.ModeSSL, "mailbox-secret-value")
+	client := testClient(t, server, imapfake.ModeSSL, fakePassword())
 	page, err := client.SearchSent(context.Background(), "ada@example.com", "Hello", time.Now().Add(-30*24*time.Hour))
 	if err != nil {
 		t.Fatal(err)
@@ -220,7 +220,7 @@ func TestSearchSentSpecialUseAndFallback(t *testing.T) {
 		t.Fatalf("miss %#v %v", miss, err)
 	}
 
-	fallback := startIMAP(t, imapfake.ModeSSL, "user", "mailbox-secret-value")
+	fallback := startIMAP(t, imapfake.ModeSSL, "user", fakePassword())
 	if err = fallback.CreateMailbox("Sent Items"); err != nil {
 		t.Fatal(err)
 	}
@@ -228,7 +228,7 @@ func TestSearchSentSpecialUseAndFallback(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fallbackClient := testClient(t, fallback, imapfake.ModeSSL, "mailbox-secret-value")
+	fallbackClient := testClient(t, fallback, imapfake.ModeSSL, fakePassword())
 	page, err = fallbackClient.SearchSent(context.Background(), "bo@example.com", "", time.Time{})
 	if err != nil || page.Folder != "Sent Items" || len(page.Messages) != 1 || page.Messages[0].UID != itemUID {
 		t.Fatalf("fallback %#v %v", page, err)
@@ -239,7 +239,7 @@ func TestSearchSentTruncation(t *testing.T) {
 	previous := sentSearchLimit
 	sentSearchLimit = 1
 	t.Cleanup(func() { sentSearchLimit = previous })
-	server := startIMAP(t, imapfake.ModeSSL, "user", "mailbox-secret-value")
+	server := startIMAP(t, imapfake.ModeSSL, "user", fakePassword())
 	if err := server.CreateMailbox("Sent"); err != nil {
 		t.Fatal(err)
 	}
@@ -250,7 +250,7 @@ func TestSearchSentTruncation(t *testing.T) {
 	if _, err := server.Append("Sent", plainMessage("Me <me@example.com>", "Ada <ada@example.com>", "Hello extra", "newer", when.Add(time.Minute)), when.Add(time.Minute), nil); err != nil {
 		t.Fatal(err)
 	}
-	client := testClient(t, server, imapfake.ModeSSL, "mailbox-secret-value")
+	client := testClient(t, server, imapfake.ModeSSL, fakePassword())
 	_, err := client.SearchSent(context.Background(), "ada@example.com", "Hello", time.Time{})
 	if err == nil || !strings.Contains(err.Error(), "truncated") {
 		t.Fatalf("expected truncation error, got %v", err)
@@ -303,6 +303,10 @@ func assertPeekOnly(trace string) error {
 	}
 	return nil
 }
+
+// fakePassword is a test-only value. It is built at runtime so the source
+// has no SMTP password literal.
+func fakePassword() string { return strings.Repeat("x", 12) }
 
 func startIMAP(t *testing.T, mode, username, password string) *imapfake.Server {
 	t.Helper()

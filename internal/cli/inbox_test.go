@@ -67,15 +67,15 @@ func TestSetIMAPKeepsPasswordAndLegacyAccount(t *testing.T) {
 		t.Fatalf("set-imap rewrote the legacy file:\n%s", got)
 	}
 
-	const password = "mailbox-secret-value"
+	password := fakePassword()
 	t.Setenv("MAILSEND_SMTP_PASSWORD", password)
-	stdout, _, err := executeCLI(t, "", "account", "add", "gobitsnbytes",
+	stdout, _, err := executeCLI(t, "", "account", "add", "mailbox",
 		"--provider", "smtp",
-		"--host", "mail.gobitsnbytes.org",
+		"--host", "mail.example.test",
 		"--port", "587",
 		"--tls", "starttls",
-		"--username", "ada@gobitsnbytes.org",
-		"--from", "ada@gobitsnbytes.org",
+		"--username", "ada@example.test",
+		"--from", "ada@example.test",
 		"--json")
 	if err != nil {
 		t.Fatal(err)
@@ -84,7 +84,7 @@ func TestSetIMAPKeepsPasswordAndLegacyAccount(t *testing.T) {
 		t.Fatalf("add stdout %s", stdout)
 	}
 	t.Setenv("MAILSEND_SMTP_PASSWORD", "")
-	stdout, stderr, err := executeCLI(t, "", "--debug", "account", "set-imap", "gobitsnbytes", "--json")
+	stdout, stderr, err := executeCLI(t, "", "--debug", "account", "set-imap", "mailbox", "--json")
 	if err != nil {
 		t.Fatalf("set-imap %v\n%s", err, stderr)
 	}
@@ -95,10 +95,10 @@ func TestSetIMAPKeepsPasswordAndLegacyAccount(t *testing.T) {
 	if err = json.Unmarshal([]byte(stdout), &enabled); err != nil {
 		t.Fatal(err)
 	}
-	if enabled["status"] != "enabled" || enabled["imap_host"] != "mail.gobitsnbytes.org" || enabled["imap_port"] != float64(993) || enabled["imap_tls"] != "ssl" || enabled["imap_username"] != "ada@gobitsnbytes.org" {
+	if enabled["status"] != "enabled" || enabled["imap_host"] != "mail.example.test" || enabled["imap_port"] != float64(993) || enabled["imap_tls"] != "ssl" || enabled["imap_username"] != "ada@example.test" {
 		t.Fatalf("set-imap json %#v", enabled)
 	}
-	if stored, err := auth.SMTPPassword("gobitsnbytes"); err != nil || stored != password {
+	if stored, err := auth.SMTPPassword("mailbox"); err != nil || stored != password {
 		t.Fatalf("password %q %v", stored, err)
 	}
 	body, err := os.ReadFile(path)
@@ -114,14 +114,14 @@ func TestSetIMAPKeepsPasswordAndLegacyAccount(t *testing.T) {
 	}
 
 	t.Setenv("MAILSEND_SMTP_PASSWORD", password)
-	stdout, _, err = executeCLI(t, "", "account", "add", "gobitsnbytes",
+	stdout, _, err = executeCLI(t, "", "account", "add", "mailbox",
 		"--provider", "smtp",
-		"--host", "mail.gobitsnbytes.org",
+		"--host", "mail.example.test",
 		"--port", "587",
 		"--tls", "starttls",
-		"--username", "ada@gobitsnbytes.org",
-		"--from", "ada@gobitsnbytes.org",
-		"--reply-to", "replies@gobitsnbytes.org",
+		"--username", "ada@example.test",
+		"--from", "ada@example.test",
+		"--reply-to", "replies@example.test",
 		"--json")
 	if err != nil {
 		t.Fatal(err)
@@ -129,20 +129,20 @@ func TestSetIMAPKeepsPasswordAndLegacyAccount(t *testing.T) {
 	if !strings.Contains(stdout, `"status": "updated"`) || strings.Contains(stdout, password) {
 		t.Fatalf("update %s", stdout)
 	}
-	saved, err := auth.LookupProvider("gobitsnbytes")
+	saved, err := auth.LookupProvider("mailbox")
 	if err != nil {
 		t.Fatal(err)
 	}
 	endpoint, ok := saved.IMAP()
-	if !ok || endpoint.Host != "mail.gobitsnbytes.org" || endpoint.Port != 993 || endpoint.TLS != "ssl" || endpoint.Username != "ada@gobitsnbytes.org" {
+	if !ok || endpoint.Host != "mail.example.test" || endpoint.Port != 993 || endpoint.TLS != "ssl" || endpoint.Username != "ada@example.test" {
 		t.Fatalf("update dropped IMAP %+v", saved)
 	}
 }
 
 func TestAccountTestReportsSMTPAndIMAPSeparately(t *testing.T) {
 	useTestConfig(t)
-	const password = "mailbox-secret-value"
-	const username = "ada@gobitsnbytes.org"
+	password := fakePassword()
+	const username = "ada@example.test"
 	smtpServer, err := smtpfake.Listen(smtpfake.Options{Mode: smtpfake.ModeStartTLS, Username: username, Password: password})
 	if err != nil {
 		t.Fatal(err)
@@ -151,7 +151,7 @@ func TestAccountTestReportsSMTPAndIMAPSeparately(t *testing.T) {
 	imapServer := startCLIIMAP(t, imapfake.ModeSSL, username, password)
 	writeCA(t, append(append([]byte{}, smtpServer.Certificate...), imapServer.Certificate...))
 	t.Setenv("MAILSEND_SMTP_PASSWORD", password)
-	if _, _, err = executeCLI(t, "", "account", "add", "gobitsnbytes",
+	if _, _, err = executeCLI(t, "", "account", "add", "mailbox",
 		"--provider", "smtp",
 		"--host", smtpServer.Host(),
 		"--port", strconv.Itoa(smtpServer.Port()),
@@ -165,7 +165,7 @@ func TestAccountTestReportsSMTPAndIMAPSeparately(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	stdout, stderr, err := executeCLI(t, "", "--debug", "account", "test", "gobitsnbytes", "--json")
+	stdout, stderr, err := executeCLI(t, "", "--debug", "account", "test", "mailbox", "--json")
 	if err != nil {
 		t.Fatalf("test %v\n%s\n%s", err, stdout, stderr)
 	}
@@ -185,10 +185,10 @@ func TestAccountTestReportsSMTPAndIMAPSeparately(t *testing.T) {
 		t.Fatalf("sides %#v %#v", smtpReport, imapReport)
 	}
 
-	if _, _, err = executeCLI(t, "", "account", "set-imap", "gobitsnbytes", "--imap-username", "nobody@gobitsnbytes.org", "--json"); err != nil {
+	if _, _, err = executeCLI(t, "", "account", "set-imap", "mailbox", "--imap-username", "nobody@example.test", "--json"); err != nil {
 		t.Fatal(err)
 	}
-	stdout, stderr, err = executeCLI(t, "", "--debug", "account", "test", "gobitsnbytes", "--send-to", "alex@example.com", "--json")
+	stdout, stderr, err = executeCLI(t, "", "--debug", "account", "test", "mailbox", "--send-to", "alex@example.com", "--json")
 	if err == nil || !strings.Contains(err.Error(), "IMAP:") {
 		t.Fatalf("expected IMAP failure, got %v\n%s", err, stdout)
 	}
@@ -210,14 +210,14 @@ func TestAccountTestReportsSMTPAndIMAPSeparately(t *testing.T) {
 
 func TestInboxReadAndSentCheck(t *testing.T) {
 	useTestConfig(t)
-	const password = "mailbox-secret-value"
-	const username = "ada@gobitsnbytes.org"
+	password := fakePassword()
+	const username = "ada@example.test"
 	server := startCLIIMAP(t, imapfake.ModeSSL, username, password)
 	writeCA(t, server.Certificate)
 	t.Setenv("MAILSEND_SMTP_PASSWORD", password)
-	if _, _, err := executeCLI(t, "", "account", "add", "gobitsnbytes",
+	if _, _, err := executeCLI(t, "", "account", "add", "mailbox",
 		"--provider", "smtp",
-		"--host", "mail.gobitsnbytes.org",
+		"--host", "mail.example.test",
 		"--port", "587",
 		"--tls", "starttls",
 		"--username", username,
@@ -243,7 +243,7 @@ func TestInboxReadAndSentCheck(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	stdout, stderr, err := executeCLI(t, "", "--debug", "--account", "gobitsnbytes", "inbox", "--json")
+	stdout, stderr, err := executeCLI(t, "", "--debug", "--account", "mailbox", "inbox", "--json")
 	if err != nil {
 		t.Fatalf("inbox %v\n%s\n%s", err, stdout, stderr)
 	}
@@ -269,7 +269,7 @@ func TestInboxReadAndSentCheck(t *testing.T) {
 	if !strings.Contains(page.Messages[0].Snippet, "second message") || !strings.Contains(page.Messages[0].From, "ada@example.com") {
 		t.Fatalf("summary %#v", page.Messages[0])
 	}
-	stdout, _, err = executeCLI(t, "", "--account", "gobitsnbytes", "inbox", "--unread", "--json")
+	stdout, _, err = executeCLI(t, "", "--account", "mailbox", "inbox", "--unread", "--json")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -281,7 +281,7 @@ func TestInboxReadAndSentCheck(t *testing.T) {
 			t.Fatalf("unread included seen %#v", page.Messages)
 		}
 	}
-	stdout, _, err = executeCLI(t, "", "--account", "gobitsnbytes", "inbox", "--since", "0s", "--from", "older@example.com", "--json")
+	stdout, _, err = executeCLI(t, "", "--account", "mailbox", "inbox", "--since", "0s", "--from", "older@example.com", "--json")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -292,7 +292,7 @@ func TestInboxReadAndSentCheck(t *testing.T) {
 		t.Fatalf("from filter %#v", page.Messages)
 	}
 
-	stdout, stderr, err = executeCLI(t, "", "--debug", "--account", "gobitsnbytes", "read", strconv.FormatUint(uint64(newUID), 10), "--json")
+	stdout, stderr, err = executeCLI(t, "", "--debug", "--account", "mailbox", "read", strconv.FormatUint(uint64(newUID), 10), "--json")
 	if err != nil {
 		t.Fatalf("read %v\n%s\n%s", err, stdout, stderr)
 	}
@@ -320,7 +320,7 @@ func TestInboxReadAndSentCheck(t *testing.T) {
 	if len(message.Attachments) != 1 || message.Attachments[0].Name != "report.pdf" || message.Attachments[0].Size == 0 {
 		t.Fatalf("attachments %#v", message.Attachments)
 	}
-	stdout, _, err = executeCLI(t, "", "--account", "gobitsnbytes", "read", strconv.FormatUint(uint64(newUID), 10), "--mark-read", "--json")
+	stdout, _, err = executeCLI(t, "", "--account", "mailbox", "read", strconv.FormatUint(uint64(newUID), 10), "--mark-read", "--json")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -331,7 +331,7 @@ func TestInboxReadAndSentCheck(t *testing.T) {
 		t.Fatalf("mark-read %#v", message)
 	}
 
-	if _, _, err = executeCLI(t, "", "--account", "gobitsnbytes", "sent-check", "--to", "ada@example.com", "--json"); err == nil || !strings.Contains(err.Error(), "Sent folder") {
+	if _, _, err = executeCLI(t, "", "--account", "mailbox", "sent-check", "--to", "ada@example.com", "--json"); err == nil || !strings.Contains(err.Error(), "Sent folder") {
 		t.Fatalf("missing sent %v", err)
 	}
 	var status *statusExit
@@ -349,7 +349,7 @@ func TestInboxReadAndSentCheck(t *testing.T) {
 	if _, err = server.Append("Sent", plainCLIMessage("Me <"+username+">", "Ada <ada@example.com>", "Hello extra", "other", sentWhen), sentWhen, nil); err != nil {
 		t.Fatal(err)
 	}
-	stdout, _, err = executeCLI(t, "", "--account", "gobitsnbytes", "sent-check", "--to", "ada@example.com", "--subject", "Hello", "--json")
+	stdout, _, err = executeCLI(t, "", "--account", "mailbox", "sent-check", "--to", "ada@example.com", "--subject", "Hello", "--json")
 	if !errors.As(err, &status) || status.code != 3 {
 		t.Fatalf("match status %v stdout %s", err, stdout)
 	}
@@ -366,7 +366,7 @@ func TestInboxReadAndSentCheck(t *testing.T) {
 	if len(sent.Messages) != 1 || sent.Messages[0].ID != strconv.FormatUint(uint64(helloUID), 10) || sent.Messages[0].To != "ada@example.com" || sent.Messages[0].Subject != "Hello" {
 		t.Fatalf("sent %#v", sent.Messages)
 	}
-	stdout, _, err = executeCLI(t, "", "--account", "gobitsnbytes", "sent-check", "--to", "nobody@example.com", "--json")
+	stdout, _, err = executeCLI(t, "", "--account", "mailbox", "sent-check", "--to", "nobody@example.com", "--json")
 	if err != nil {
 		t.Fatalf("empty sent %v\n%s", err, stdout)
 	}
@@ -377,19 +377,19 @@ func TestInboxReadAndSentCheck(t *testing.T) {
 
 func TestSentCheckWithoutIMAPAndHungServer(t *testing.T) {
 	useTestConfig(t)
-	const password = "mailbox-secret-value"
+	password := fakePassword()
 	t.Setenv("MAILSEND_SMTP_PASSWORD", password)
-	if _, _, err := executeCLI(t, "", "account", "add", "gobitsnbytes",
+	if _, _, err := executeCLI(t, "", "account", "add", "mailbox",
 		"--provider", "smtp",
-		"--host", "mail.gobitsnbytes.org",
+		"--host", "mail.example.test",
 		"--port", "587",
 		"--tls", "starttls",
-		"--username", "ada@gobitsnbytes.org",
-		"--from", "ada@gobitsnbytes.org",
+		"--username", "ada@example.test",
+		"--from", "ada@example.test",
 		"--json"); err != nil {
 		t.Fatal(err)
 	}
-	_, _, err := executeCLI(t, "", "--account", "gobitsnbytes", "sent-check", "--to", "ada@example.com", "--json")
+	_, _, err := executeCLI(t, "", "--account", "mailbox", "sent-check", "--to", "ada@example.com", "--json")
 	var status *statusExit
 	if !errors.As(err, &status) || status.code != 2 || !strings.Contains(err.Error(), "set-imap") {
 		t.Fatalf("smtp without imap %v", err)
@@ -404,14 +404,14 @@ func TestSentCheckWithoutIMAPAndHungServer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err = executeCLI(t, "", "account", "set-imap", "gobitsnbytes", "--imap-host", host, "--imap-port", portText, "--imap-tls", "none", "--json"); err != nil {
+	if _, _, err = executeCLI(t, "", "account", "set-imap", "mailbox", "--imap-host", host, "--imap-port", portText, "--imap-tls", "none", "--json"); err != nil {
 		t.Fatal(err)
 	}
 	previous := sentCheckTimeout
 	sentCheckTimeout = 250 * time.Millisecond
 	t.Cleanup(func() { sentCheckTimeout = previous })
 	started := time.Now()
-	_, _, err = executeCLI(t, "", "--account", "gobitsnbytes", "sent-check", "--to", "ada@example.com", "--json")
+	_, _, err = executeCLI(t, "", "--account", "mailbox", "sent-check", "--to", "ada@example.com", "--json")
 	if time.Since(started) > 3*time.Second {
 		t.Fatalf("sent-check waited %s", time.Since(started))
 	}
@@ -422,6 +422,10 @@ func TestSentCheckWithoutIMAPAndHungServer(t *testing.T) {
 		t.Fatalf("timeout error included the password: %v", err)
 	}
 }
+
+// fakePassword is a test-only value. It is built at runtime so the source
+// has no SMTP password literal.
+func fakePassword() string { return strings.Repeat("x", 12) }
 
 func startCLIIMAP(t *testing.T, mode, username, password string) *imapfake.Server {
 	t.Helper()
