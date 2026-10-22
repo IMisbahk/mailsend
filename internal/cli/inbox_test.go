@@ -19,8 +19,8 @@ import (
 
 func TestVersionAndIMAPHelp(t *testing.T) {
 	useTestConfig(t)
-	stdout, _, err := executeCLI(t, "", "version")
-	if err != nil || strings.TrimSpace(stdout) != "0.2.0" {
+	stdout, _, err := executeCLI(t, "", "version", "--json")
+	if err != nil || !strings.Contains(stdout, `"version": "0.2.0"`) {
 		t.Fatalf("version %q %v", stdout, err)
 	}
 	stdout, _, err = executeCLI(t, "", "account", "set-imap", "--help")
@@ -237,7 +237,8 @@ func TestInboxReadAndSentCheck(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	seenUID, err := server.Append("INBOX", plainCLIMessage("Seen <seen@example.com>", "Me <me@example.com>", "Already read", "seen body", recent), recent, []imap.Flag{imap.FlagSeen})
+	seenWhen := recent.Add(-time.Hour)
+	seenUID, err := server.Append("INBOX", plainCLIMessage("Seen <seen@example.com>", "Me <me@example.com>", "Already read", "seen body", seenWhen), seenWhen, []imap.Flag{imap.FlagSeen})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -403,7 +404,7 @@ func TestSentCheckWithoutIMAPAndHungServer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err = executeCLI(t, "", "account", "set-imap", "gobitsnbytes", "--imap-host", host, "--imap-port", portText, "--imap-tls", "none"); err != nil {
+	if _, _, err = executeCLI(t, "", "account", "set-imap", "gobitsnbytes", "--imap-host", host, "--imap-port", portText, "--imap-tls", "none", "--json"); err != nil {
 		t.Fatal(err)
 	}
 	previous := sentCheckTimeout

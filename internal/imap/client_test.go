@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -61,11 +62,10 @@ func TestCheckLoginModesDoNotSelect(t *testing.T) {
 			if strings.Contains(logged, "mailbox-secret-value") {
 				t.Fatal("password remained in the redacted trace")
 			}
-			upper := strings.ToUpper(trace.String())
-			if !strings.Contains(upper, "LOGIN") || !strings.Contains(upper, "LOGOUT") {
+			if !traceHasCommand(trace.String(), "LOGIN") || !traceHasCommand(trace.String(), "LOGOUT") {
 				t.Fatalf("login conversation missing LOGIN/LOGOUT:\n%s", logged)
 			}
-			if strings.Contains(upper, "EXAMINE") || strings.Contains(upper, "SELECT ") || strings.Contains(upper, "SELECT\r") {
+			if traceHasCommand(trace.String(), "EXAMINE") || traceHasCommand(trace.String(), "SELECT") {
 				t.Fatalf("login opened a mailbox:\n%s", logged)
 			}
 		})
@@ -92,7 +92,8 @@ func TestListDoesNotMarkReadAndSortsByDate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	seenUID, err := server.Append("INBOX", plainMessage("Seen <seen@example.com>", "Ada <ada@example.com>", "Already read", "seen body", newer), newer, []imap.Flag{imap.FlagSeen})
+	seenWhen := newer.Add(-time.Minute)
+	seenUID, err := server.Append("INBOX", plainMessage("Seen <seen@example.com>", "Ada <ada@example.com>", "Already read", "seen body", seenWhen), seenWhen, []imap.Flag{imap.FlagSeen})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,8 +105,8 @@ func TestListDoesNotMarkReadAndSortsByDate(t *testing.T) {
 		t.Fatal(err)
 	}
 	logged := strings.ReplaceAll(trace.String(), "mailbox-secret-value", "[redacted]")
-	if !clientUsedPeek(logged) || strings.Contains(strings.ToUpper(logged), "STORE") {
-		t.Fatalf("list protocol:\n%s", logged)
+	if err = assertPeekOnly(logged); err != nil {
+		t.Fatalf("list protocol: %v\n%s", err, logged)
 	}
 	if len(listed) != 3 {
 		t.Fatalf("listed %#v", listed)
@@ -113,7 +114,7 @@ func TestListDoesNotMarkReadAndSortsByDate(t *testing.T) {
 	if listed[0].Subject != "First stored" || listed[0].UID == oldUID {
 		t.Fatalf("newest first %#v", listed)
 	}
-	if listed[0].Seen || !strings.Contains(listed[0].Snippet, "newer body") || !strings.Contains(listed[0].From, "ada@example.com") {
+	if listed[0].Seen || !strings.Contains(listed[0].Snippet, "newer body") || !strings.Contains(listed[0].From, "newer@example.com") {
 		t.Fatalf("summary %#v", listed[0])
 	}
 	unread, err := client.List(context.Background(), ListQuery{Limit: 10, Unread: true, Since: time.Now().Add(-7 * 24 * time.Hour)})
@@ -157,8 +158,8 @@ func TestReadPlainHTMLAndAttachment(t *testing.T) {
 		t.Fatal(err)
 	}
 	logged := strings.ReplaceAll(trace.String(), "mailbox-secret-value", "[redacted]")
-	if strings.Contains(strings.ToUpper(logged), "STORE") || !clientUsedPeek(logged) {
-		t.Fatalf("read protocol:\n%s", logged)
+	if err = assertPeekOnly(logged); err != nil {
+		t.Fatalf("read protocol: %v\n%s", err, logged)
 	}
 	if message.Seen || strings.Contains(message.Body, "JVBERi0") || !strings.Contains(message.Body, "second message") {
 		t.Fatalf("body %#v", message)
@@ -178,7 +179,7 @@ func TestReadPlainHTMLAndAttachment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !marked.MarkedRead || !strings.Contains(strings.ToUpper(trace.String()), "STORE") {
+	if !marked.MarkedRead || !traceHasCommand(trace.String(), "STORE") {
 		t.Fatalf("mark read %#v\n%s", marked, strings.ReplaceAll(trace.String(), "mailbox-secret-value", "[redacted]"))
 	}
 	checked, err := client.Read(context.Background(), "INBOX", uid, false)
@@ -256,27 +257,51 @@ func TestSearchSentTruncation(t *testing.T) {
 	}
 }
 
-// clientUsedPeek reports whether the client opened the mailbox read-only and
-// fetched bodies with BODY.PEEK. Server FETCH replies echo BODY[section]
-// even for a peek, so only command lines are checked.
-func clientUsedPeek(trace string) bool {
-	upper := strings.ToUpper(trace)
-	if !strings.Contains(upper, "EXAMINE") || !strings.Contains(upper, "BODY.PEEK") {
-		return false
-	}
-	for _, line := range strings.Split(upper, "\n") {
-		line = strings.TrimSpace(line)
-		if !strings.HasPrefix(line, "T") {
+func traceHasCommand(trace, name string) bool {
+	name = strings.ToUpper(name)
+	for _, line := range strings.Split(strings.ToUpper(trace), "\n") {
+		fields := strings.Fields(strings.TrimSpace(line))
+		if len(fields) < 2 || !strings.HasPrefix(fields[0], "T") {
 			continue
 		}
-		if strings.Contains(line, " OK") || strings.Contains(line, " NO ") || strings.Contains(line, " BAD ") {
-			continue
+		command := fields[1]
+		if command == "UID" && len(fields) >= 3 {
+			command = fields[2]
 		}
-		if strings.Contains(line, "BODY[") {
-			return false
+		if command == name {
+			return true
 		}
 	}
-	return true
+	return false
+}
+
+// assertPeekOnly checks that the client opened the mailbox with EXAMINE and
+// fetched text with BODY.PEEK. Server replies echo BODY[section] for a peek,
+// and message text can contain words such as "stored", so only commands count.
+func assertPeekOnly(trace string) error {
+	if !traceHasCommand(trace, "EXAMINE") {
+		return fmt.Errorf("missing EXAMINE")
+	}
+	if traceHasCommand(trace, "SELECT") || traceHasCommand(trace, "STORE") {
+		return fmt.Errorf("mailbox was selected or flags were stored")
+	}
+	sawPeek := false
+	for _, line := range strings.Split(strings.ToUpper(trace), "\n") {
+		fields := strings.Fields(strings.TrimSpace(line))
+		if len(fields) < 2 || !strings.HasPrefix(fields[0], "T") {
+			continue
+		}
+		if strings.Contains(line, "BODY.PEEK") {
+			sawPeek = true
+		}
+		if strings.Contains(line, " BODY[") {
+			return fmt.Errorf("fetch was not a peek: %s", strings.TrimSpace(line))
+		}
+	}
+	if !sawPeek {
+		return fmt.Errorf("missing BODY.PEEK")
+	}
+	return nil
 }
 
 func startIMAP(t *testing.T, mode, username, password string) *imapfake.Server {
