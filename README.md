@@ -134,6 +134,45 @@ mailsend account test sunbeam-smtp
 mailsend account --account sunbeam-smtp
 ```
 
+### Reading mail over IMAP
+
+SMTP accounts can also read mail. IMAP uses the SMTP password already in the keychain. Enable it on an existing account without typing that password again:
+
+```sh
+mailsend account set-imap gobitsnbytes
+```
+
+With no flags, the IMAP host is the SMTP host, the port is 993, the TLS mode is `ssl` (implicit TLS), and the username is the SMTP username. That matches a host such as `mail.gobitsnbytes.org` which submits on SMTP port 587 with STARTTLS and serves IMAP on port 993. Override any of those when the mailbox server differs:
+
+```sh
+mailsend account set-imap gobitsnbytes \
+  --imap-host mail.gobitsnbytes.org \
+  --imap-port 993 \
+  --imap-tls ssl \
+  --imap-username ada@gobitsnbytes.org
+```
+
+`account add` accepts the same `--imap-host`, `--imap-port`, `--imap-tls`, and `--imap-username` flags, so a new account can enable IMAP in the same step. Running `account add` again without those flags keeps the IMAP settings already stored. Accounts saved before IMAP support have no `imapHost` field and keep loading as they did. `set-imap` writes only the mailbox host, port, TLS mode, and username into `accounts.json`.
+
+`account test` logs in over IMAP and logs out without opening a mailbox when IMAP is configured. SMTP and IMAP are reported separately. `--send-to` sends the test message only after both succeed. `--imap-tls none` is cleartext and is called out the same way as SMTP `--tls none`. `MAILSEND_SMTP_CA_FILE` is the PEM trust file for both SMTP and IMAP.
+
+```sh
+mailsend inbox --account gobitsnbytes
+mailsend inbox --account gobitsnbytes --folder INBOX --limit 20 --unread --since 7d --from ada@example.com --json
+mailsend read 42 --account gobitsnbytes
+mailsend read 42 --account gobitsnbytes --folder INBOX --mark-read --json
+```
+
+`inbox` lists newest first: UID, date, from, subject, a short snippet, and whether the message is seen. The mailbox is opened read-only with EXAMINE, and text is fetched with BODY.PEEK, so listing leaves the seen flag alone. `--since` defaults to `7d`. `0s` lists without a time limit. `--limit` accepts 1 through 1000.
+
+`read` shows the headers and the `text/plain` body. A message with only `text/html` is shown with the tags removed. Attachment names and sizes are listed; the attachment bytes stay on the server. The message stays unread unless `--mark-read` is set, which selects the mailbox and adds the `\Seen` flag.
+
+`sent-check` on an SMTP account with IMAP searches the Sent mailbox. It uses the SPECIAL-USE `\Sent` folder when the server advertises one, and otherwise the first existing name among `Sent`, `Sent Items`, `Sent Messages`, and `INBOX.Sent`. The flags, exit codes, and JSON object match the Gmail command: exit 0 means none, exit 3 means at least one match, exit 2 means the search failed. Each IMAP hit uses the UID as `id`. An SMTP account without IMAP exits 2 and tells you to run `account set-imap`. Gmail `sent-check` is unchanged, and `dispatch` still reconciles crashed sends against Gmail Sent.
+
+```sh
+mailsend sent-check --account gobitsnbytes --to ada@example.com --since 30d --json
+```
+
 `--send-to` authenticates and then sends one test message, which is recorded in history with kind `test`:
 
 ```sh
@@ -164,7 +203,7 @@ What differs from Gmail:
 - The Gmail From address is the Google account. The SMTP From address is `--from`. Neither path accepts an arbitrary per-message From address. `--from-name` sets the display name for both.
 - Gmail returns the API message id. SMTP records the Message-ID generated on the sender's domain.
 - Gmail messages include a BCC header. SMTP messages keep BCC only in the envelope.
-- `account` and `account test` call Google's profile endpoint for Gmail. For SMTP they report the saved settings, or connect, negotiate TLS, and authenticate, without sending unless `--send-to` is set.
+- `account` and `account test` call Google's profile endpoint for Gmail. For SMTP they report the saved settings, or connect, negotiate TLS, and authenticate, without sending unless `--send-to` is set. When IMAP is configured, `account test` also logs in and out of the mailbox and reports that result beside SMTP.
 - `quota` text names the active provider. Both report that a remaining-send count is unavailable.
 - SMTP 4xx responses are temporary and retryable. SMTP 5xx responses are permanent. A lost reply after DATA is uncertain for both providers.
 
@@ -338,7 +377,7 @@ mailsend sent-check --account sunbeam --to ada@example.com --since 30d --json
 mailsend --account sunbeam dispatch --require-sent-check --sent-within 7d --interval 5m
 ```
 
-`sent-check` prints matching messages (`id`, `date`, `to`, `subject`). Exit 0 means none. Exit 3 means at least one. Exit 2 means the search failed or the scope is missing. `--since` defaults to 30 days. `--subject` is optional. The pre-send gate matches on recipient and time only.
+`sent-check` prints matching messages (`id`, `date`, `to`, `subject`). Exit 0 means none. Exit 3 means at least one. Exit 2 means the search failed or the scope is missing. `--since` defaults to 30 days. `--subject` is optional. The pre-send gate matches on recipient and time only. On an SMTP account the same command searches IMAP Sent and prints the UID in `id`. `dispatch --require-sent-check` still uses Gmail Sent for that gate.
 
 ```sh
 mailsend queue list
@@ -430,11 +469,11 @@ A slot folder that used to run its own sender can become one batch, and one `dis
 
 ## Data and security
 
-- OAuth access and refresh tokens, and SMTP passwords, are stored in the OS keyring, never in the SQLite database, `accounts.json`, or logs. `logout` removes the token or password for that account.
+- OAuth access and refresh tokens, and SMTP passwords, are stored in the OS keyring, never in the SQLite database, `accounts.json`, or logs. `logout` removes the token or password for that account. IMAP reads reuse that SMTP password. `--debug` records the host, port, TLS mode, and username, and it does not record the password.
 - The SQLite database, config directory, account metadata, and saved templates are created with owner-only permissions. The local database includes rendered message content so interrupted jobs can resume exactly; protect the OS user account and do not share the config directory.
 - OAuth client JSON is read from the configured path and is ignored by git patterns. Do not commit it. An existing `accounts.json` without a `providers` object remains valid.
 - Bulk attempts that may have reached the provider are marked `uncertain` and never automatically retried. Retryable failures are HTTP 429 / Gmail user rate-limit responses and SMTP 4xx replies, using exponential backoff (and `Retry-After` when Gmail supplies it). Transport loss, a lost SMTP reply after DATA, and permanent 5xx replies are not retried.
-- Bulk and one-off sends still cannot prove an ambiguous timed-out delivery. Check Sent before retrying an `uncertain` row. Queue dispatch can search Gmail Sent when the token has `gmail.readonly`, and `mailsend sent-check` does the same lookup on demand.
+- Bulk and one-off sends still cannot prove an ambiguous timed-out delivery. Check Sent before retrying an `uncertain` row. Queue dispatch can search Gmail Sent when the token has `gmail.readonly`, and `mailsend sent-check` does the same lookup on demand. For an SMTP account, `sent-check` searches the IMAP Sent mailbox after `account set-imap`. Listing and reading use EXAMINE and BODY.PEEK, so those commands leave mail unread unless `read --mark-read` is set.
 
 ## Development and tests
 
@@ -446,7 +485,7 @@ make build
 ./build/mailsend --help
 ```
 
-The unit suite uses local HTTP mocks for Gmail and an in-process SMTP server. It does not require Google credentials or a real mail server. It covers OAuth API error classification, SMTP authentication, STARTTLS, implicit TLS, cleartext, 4xx and 5xx replies, send-response ambiguity, MIME alternatives and attachments, recipient parsing, templates, CSV parsing, rate delay bounds, SQLite job history, duplicate detection, and crash recovery. Legacy account files without a provider stay on the Gmail path.
+The unit suite uses local HTTP mocks for Gmail, an in-process SMTP server, and an in-memory IMAP server. It does not require Google credentials or a real mail server. It covers OAuth API error classification, SMTP authentication, STARTTLS, implicit TLS, cleartext, 4xx and 5xx replies, send-response ambiguity, MIME alternatives and attachments, recipient parsing, templates, CSV parsing, rate delay bounds, SQLite job history, duplicate detection, and crash recovery. IMAP tests cover login and logout, EXAMINE with BODY.PEEK, newest-first listing, plain and HTML bodies, attachment names, the seen flag, and Sent search. Legacy account files without a provider stay on the Gmail path, and files without IMAP fields keep loading.
 
 Manual integration test after OAuth setup (this sends a real message):
 

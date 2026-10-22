@@ -17,6 +17,8 @@ const (
 
 // ProviderConfig is the non-secret portion of an account. Existing Gmail
 // accounts have no entry; an absent provider means Gmail.
+// IMAP fields are optional. Accounts saved before IMAP support have none,
+// and those files still load.
 type ProviderConfig struct {
 	Name     string `json:"-"`
 	Provider string `json:"provider,omitempty"`
@@ -26,6 +28,20 @@ type ProviderConfig struct {
 	Username string `json:"username,omitempty"`
 	From     string `json:"from,omitempty"`
 	ReplyTo  string `json:"replyTo,omitempty"`
+
+	IMAPHost     string `json:"imapHost,omitempty"`
+	IMAPPort     int    `json:"imapPort,omitempty"`
+	IMAPTLS      string `json:"imapTls,omitempty"`
+	IMAPUsername string `json:"imapUsername,omitempty"`
+}
+
+// IMAPEndpoint is the resolved IMAP server for an account. The password is
+// the SMTP password already stored in the keychain.
+type IMAPEndpoint struct {
+	Host     string
+	Port     int
+	TLS      string
+	Username string
 }
 
 func smtpPasswordKey(name string) string { return "smtp-password:" + name }
@@ -71,15 +87,111 @@ func NormalizeSMTP(cfg ProviderConfig) (ProviderConfig, error) {
 	if err != nil {
 		return ProviderConfig{}, err
 	}
+	cfg.Username = prepared.Username
+	imapCfg, err := normalizeIMAP(cfg)
+	if err != nil {
+		return ProviderConfig{}, err
+	}
 	return ProviderConfig{
-		Provider: ProviderSMTP,
-		Host:     prepared.Host,
-		Port:     prepared.Port,
-		TLS:      prepared.TLSMode,
-		Username: prepared.Username,
-		From:     prepared.From,
-		ReplyTo:  prepared.ReplyTo,
+		Provider:     ProviderSMTP,
+		Host:         prepared.Host,
+		Port:         prepared.Port,
+		TLS:          prepared.TLSMode,
+		Username:     prepared.Username,
+		From:         prepared.From,
+		ReplyTo:      prepared.ReplyTo,
+		IMAPHost:     imapCfg.IMAPHost,
+		IMAPPort:     imapCfg.IMAPPort,
+		IMAPTLS:      imapCfg.IMAPTLS,
+		IMAPUsername: imapCfg.IMAPUsername,
 	}, nil
+}
+
+// IMAP reports the mailbox server when this account has IMAP settings.
+// An empty host means IMAP is not configured. A missing port uses 993, a
+// missing TLS mode uses implicit TLS, and a missing username uses the SMTP
+// username.
+func (cfg ProviderConfig) IMAP() (IMAPEndpoint, bool) {
+	host := strings.TrimSpace(cfg.IMAPHost)
+	if host == "" {
+		return IMAPEndpoint{}, false
+	}
+	port := cfg.IMAPPort
+	if port == 0 {
+		port = 993
+	}
+	mode := strings.TrimSpace(cfg.IMAPTLS)
+	if mode == "" {
+		mode = smtp.TLSSSL
+	}
+	username := strings.TrimSpace(cfg.IMAPUsername)
+	if username == "" {
+		username = strings.TrimSpace(cfg.Username)
+	}
+	return IMAPEndpoint{Host: host, Port: port, TLS: mode, Username: username}, true
+}
+
+// normalizeIMAP checks optional IMAP fields. All empty means IMAP is off.
+// When a host is set, the default port is 993 and the default TLS mode is
+// implicit TLS (ssl). The username defaults to the SMTP username.
+func normalizeIMAP(cfg ProviderConfig) (ProviderConfig, error) {
+	host := strings.Trim(strings.TrimSpace(cfg.IMAPHost), "[]")
+	mode := strings.TrimSpace(cfg.IMAPTLS)
+	username := strings.TrimSpace(cfg.IMAPUsername)
+	port := cfg.IMAPPort
+	if host == "" && mode == "" && username == "" && port == 0 {
+		return ProviderConfig{}, nil
+	}
+	if host == "" || strings.Contains(host, "://") || strings.ContainsAny(host, " \t\r\n/") {
+		return ProviderConfig{}, fmt.Errorf("invalid IMAP host %q", cfg.IMAPHost)
+	}
+	if mode == "" {
+		mode = smtp.TLSSSL
+	}
+	normalized, err := smtp.NormalizeTLS(mode)
+	if err != nil {
+		return ProviderConfig{}, fmt.Errorf("invalid IMAP TLS mode %q (use ssl, starttls, or none)", cfg.IMAPTLS)
+	}
+	if port == 0 {
+		port = 993
+	}
+	if port < 1 || port > 65535 {
+		return ProviderConfig{}, fmt.Errorf("invalid IMAP port %d", port)
+	}
+	if username == "" {
+		username = strings.TrimSpace(cfg.Username)
+	}
+	if username == "" || strings.ContainsAny(username, "\r\n") {
+		return ProviderConfig{}, fmt.Errorf("IMAP username is required")
+	}
+	return ProviderConfig{IMAPHost: host, IMAPPort: port, IMAPTLS: normalized, IMAPUsername: username}, nil
+}
+
+// SetIMAP stores IMAP settings on an existing SMTP account. It does not read
+// or replace the keychain password.
+func SetIMAP(name string, cfg ProviderConfig) error {
+	name = accountName(name)
+	if err := ValidateAccountName(name); err != nil {
+		return err
+	}
+	current, err := readManifest()
+	if err != nil {
+		return err
+	}
+	if !accountListed(current, name) || providerOf(current, name) != ProviderSMTP {
+		return fmt.Errorf("account %q is not an SMTP account; add it with mailsend account add --provider smtp", name)
+	}
+	stored := current.Providers[name]
+	stored.IMAPHost = cfg.IMAPHost
+	stored.IMAPPort = cfg.IMAPPort
+	stored.IMAPTLS = cfg.IMAPTLS
+	stored.IMAPUsername = cfg.IMAPUsername
+	normalized, err := NormalizeSMTP(stored)
+	if err != nil {
+		return err
+	}
+	current.Providers[name] = normalized
+	return writeManifest(current)
 }
 
 // SaveSMTPAccount stores SMTP settings in accounts.json and the password in
