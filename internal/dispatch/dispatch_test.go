@@ -248,7 +248,7 @@ func TestDailyCapRollsOverAtISTMidnight(t *testing.T) {
 		t.Fatal(err)
 	}
 	day := time.Date(2026, 10, 21, 22, 0, 0, 0, loc)
-	if err = db.CreateJob(store.Job{ID: "outside", Kind: "send", Status: "sent", Account: "sunbeam", Subject: "earlier"}, "", []store.Recipient{{
+	if err = db.CreateJob(store.Job{ID: "outside", Kind: "send", Status: "sent", Account: "acme", Subject: "earlier"}, "", []store.Recipient{{
 		Email: "other@example.com", ToJSON: `["other@example.com"]`, Subject: "earlier", Body: "already sent", Status: "pending",
 	}}); err != nil {
 		t.Fatal(err)
@@ -260,7 +260,7 @@ func TestDailyCapRollsOverAtISTMidnight(t *testing.T) {
 	seedBatch(t, db, "batch-a", start, []queued{{email: "next@example.com", at: start}})
 	clock := &fakeClock{now: time.Date(2026, 10, 21, 23, 30, 0, 0, loc)}
 	guardSleeps(t, clock, 40)
-	counted, err := db.SentCountSince("sunbeam", dayStart(clock.Now(), loc))
+	counted, err := db.SentCountSince("acme", dayStart(clock.Now(), loc))
 	if err != nil || counted != 1 {
 		t.Fatalf("seeded send count %d %v", counted, err)
 	}
@@ -364,7 +364,7 @@ func TestTwoDispatchersDoNotBothSend(t *testing.T) {
 		t.Fatal(err)
 	}
 	logPath := filepath.Join(t.TempDir(), "sent.log")
-	lockPath := filepath.Join(t.TempDir(), "locks", "dispatch-sunbeam.lock")
+	lockPath := filepath.Join(t.TempDir(), "locks", "dispatch-acme.lock")
 	startChild := func() (*exec.Cmd, *strings.Builder) {
 		output := &strings.Builder{}
 		cmd := exec.Command(os.Args[0], "-test.run=^TestTwoDispatchersDoNotBothSend$", "-test.count=1")
@@ -450,7 +450,7 @@ func seedBatch(t *testing.T, db *store.DB, id string, start time.Time, emails []
 		})
 	}
 	if _, err := db.InsertQueueBatch(store.QueueBatch{
-		ID: id, Account: "sunbeam", Label: id, Status: "active", IntervalSeconds: 300, StartAt: store.FormatStamp(start),
+		ID: id, Account: "acme", Label: id, Status: "active", IntervalSeconds: 300, StartAt: store.FormatStamp(start),
 	}, items); err != nil {
 		t.Fatal(err)
 	}
@@ -474,7 +474,7 @@ func runDispatch(t *testing.T, db *store.DB, clock *fakeClock, sender *fakeSende
 
 func testDispatcher(db *store.DB, clock *fakeClock, sender *fakeSender, probe SentProbe, interval time.Duration, cap int, loc *time.Location) *Dispatcher {
 	return &Dispatcher{
-		DB: db, Account: "sunbeam", Interval: interval, DailyCap: cap, Timezone: loc,
+		DB: db, Account: "acme", Interval: interval, DailyCap: cap, Timezone: loc,
 		Clock: clock, Sender: sender, Probe: probe, Poll: 15 * time.Second,
 	}
 }
@@ -585,7 +585,7 @@ func (f *fakeSender) times() []time.Time {
 	return out
 }
 
-func (f *fakeSender) FromAddress() string    { return "misbah@example.com" }
+func (f *fakeSender) FromAddress() string    { return "you@example.com" }
 func (f *fakeSender) DefaultReplyTo() string { return "" }
 func (f *fakeSender) Provider() string       { return "smtp" }
 
@@ -621,7 +621,7 @@ func (f fileSender) Send(ctx context.Context, built mailmsg.BuiltMessage) (strin
 	return "msg-" + email, false, nil
 }
 
-func (fileSender) FromAddress() string    { return "misbah@example.com" }
+func (fileSender) FromAddress() string    { return "you@example.com" }
 func (fileSender) DefaultReplyTo() string { return "" }
 func (fileSender) Provider() string       { return "smtp" }
 
@@ -725,7 +725,7 @@ func runDispatchChild() error {
 	}
 	defer db.Close()
 	dispatcher := &Dispatcher{
-		DB: db, Account: "sunbeam", Interval: 0, Timezone: time.UTC, Once: true,
+		DB: db, Account: "acme", Interval: 0, Timezone: time.UTC, Once: true,
 		Sender: fileSender{path: os.Getenv("MAILSEND_SEND_LOG")}, LockPath: os.Getenv("MAILSEND_LOCK_PATH"),
 		Probe: staticProbe{evidence: SentEvidence{Verified: true, Found: false}},
 	}

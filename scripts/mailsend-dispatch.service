@@ -4,17 +4,18 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
+# Edit the account, paths, and limits for your environment before enabling this unit.
 Type=simple
 User=mailsend
-Environment=MAILSEND_CONFIG_DIR=/var/lib/mailsend
-Environment=MAILSEND_PRECHECK=/var/lib/outbound/fu-precheck.py
+Environment=MAILSEND_CONFIG_DIR=%h/.config/mailsend
+Environment=MAILSEND_PRECHECK=/path/to/precheck.py
 # Do not set MAILSEND_SLOT. The hook uses the batch label so each region's ledger slot stays intact.
-ExecStart=/usr/local/bin/mailsend --account sunbeam dispatch \
+ExecStart=/usr/local/bin/mailsend --account acme dispatch \
   --interval 5m \
-  --daily-cap 95 \
+  --daily-cap 100 \
   --timezone Asia/Kolkata \
-  --hold /var/lib/outbound/SEND_HOLD \
-  --hold-step fu-d3,fu-d7,ooo,fu=/var/lib/outbound/FOLLOWUP_HOLD \
+  --hold /path/to/SEND_HOLD \
+  --hold-step fu-d3,fu-d7,ooo,fu=/path/to/FOLLOWUP_HOLD \
   --hook /usr/local/bin/mailsend-presend-hook \
   --after-send /usr/local/bin/mailsend-presend-hook
 Restart=always

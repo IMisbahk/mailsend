@@ -212,7 +212,7 @@ func TestGapFromHistoryUsesTheNewestSentRow(t *testing.T) {
 	insertHistory(t, db, "older", "sent", "old@example.com", start.Add(-10*time.Minute))
 	insertHistory(t, db, "newer", "sent", "recent@example.com", start.Add(-time.Minute))
 	insertHistory(t, db, "failed-row", "failed", "nope@example.com", start.Add(time.Hour))
-	if err := db.SetDispatchCursor("sunbeam", start.Add(-10*time.Minute)); err != nil {
+	if err := db.SetDispatchCursor("acme", start.Add(-10*time.Minute)); err != nil {
 		t.Fatal(err)
 	}
 	seedBatch(t, db, "batch-a", start, []queued{{email: "next@example.com", at: start}})
@@ -229,7 +229,7 @@ func TestGapFromHistoryUsesTheNewestSentRow(t *testing.T) {
 	if result.Status != "idle" || len(sender.calls()) != 0 || !strings.Contains(result.Detail, want) {
 		t.Fatalf("history anchor result %#v", result)
 	}
-	if err = db.SetDispatchCursor("sunbeam", start); err != nil {
+	if err = db.SetDispatchCursor("acme", start); err != nil {
 		t.Fatal(err)
 	}
 	result, err = dispatcher.Run(context.Background())
@@ -271,7 +271,7 @@ func TestGapWithoutHistoryFlagIgnoresOrdinarySends(t *testing.T) {
 func insertHistory(t *testing.T, db *store.DB, id, status, email string, at time.Time) {
 	t.Helper()
 	if err := db.CreateJob(store.Job{
-		ID: id, Kind: "send", Status: "completed", Account: "sunbeam", Subject: "Earlier",
+		ID: id, Kind: "send", Status: "completed", Account: "acme", Subject: "Earlier",
 	}, "", []store.Recipient{{
 		Email: email, Subject: "Earlier", Body: "Hi", Status: status,
 	}}); err != nil {

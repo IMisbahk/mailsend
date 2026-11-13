@@ -117,17 +117,17 @@ func TestMultipartAlternativeAndAttachmentEncoding(t *testing.T) {
 func TestSMTPMessageIDHidesBccAndEncodesUTF8(t *testing.T) {
 	built, err := (Message{
 		To: []string{"alex@example.com"}, Cc: []string{"cc@example.com"}, Bcc: []string{"hidden@example.com"},
-		Subject: "Café update", Text: "plain", HTML: "<b>café</b>", FromName: "Misbah",
-		Account: "misbah@sunbeam.agency", ReplyTo: "replies@sunbeam.agency",
+		Subject: "Café update", Text: "plain", HTML: "<b>café</b>", FromName: "Example Sender",
+		Account: "you@example.com", ReplyTo: "replies@example.com",
 		IncludeMessageID: true, OmitBccHeader: true,
 	}).Build()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasSuffix(built.MessageID, "@sunbeam.agency>") || !strings.HasPrefix(built.MessageID, "<") {
+	if !strings.HasSuffix(built.MessageID, "@example.com>") || !strings.HasPrefix(built.MessageID, "<") {
 		t.Fatalf("message id %q", built.MessageID)
 	}
-	if built.EnvelopeFrom != "misbah@sunbeam.agency" {
+	if built.EnvelopeFrom != "you@example.com" {
 		t.Fatalf("envelope from %q", built.EnvelopeFrom)
 	}
 	if len(built.Recipients) != 3 || built.Recipients[2] != "hidden@example.com" {
@@ -147,21 +147,21 @@ func TestSMTPMessageIDHidesBccAndEncodesUTF8(t *testing.T) {
 	if parsed.Header.Get("Bcc") != "" {
 		t.Fatalf("bcc header leaked: %q", parsed.Header.Get("Bcc"))
 	}
-	if !strings.Contains(parsed.Header.Get("From"), "misbah@sunbeam.agency") || !strings.Contains(strings.ToLower(parsed.Header.Get("From")), "misbah") {
+	if !strings.Contains(parsed.Header.Get("From"), "you@example.com") || !strings.Contains(strings.ToLower(parsed.Header.Get("From")), "example sender") {
 		t.Fatalf("from header %q", parsed.Header.Get("From"))
 	}
 	decoded, err := new(mime.WordDecoder).DecodeHeader(parsed.Header.Get("Subject"))
 	if err != nil || decoded != "Café update" {
 		t.Fatalf("subject %q, %v", parsed.Header.Get("Subject"), err)
 	}
-	if !strings.Contains(parsed.Header.Get("Reply-To"), "replies@sunbeam.agency") {
+	if !strings.Contains(parsed.Header.Get("Reply-To"), "replies@example.com") {
 		t.Fatalf("reply-to %q", parsed.Header.Get("Reply-To"))
 	}
 }
 
 func TestGmailPlainTextMatchesPreV010Structure(t *testing.T) {
 	sentAt := time.Date(2026, 10, 15, 12, 0, 0, 0, time.FixedZone("UTC", 0))
-	account := "misbah@sunbeam.agency"
+	account := "you@example.com"
 	to := []string{"alex@example.com"}
 	subject := "Hello"
 	for _, text := range []string{"Hi from mailsend", "Hello from a body file\nSecond line\n"} {
@@ -231,8 +231,8 @@ func TestMIMEBodiesDoNotContainHeaders(t *testing.T) {
 		{name: "smtp", mutate: func(m *Message) {
 			m.IncludeMessageID = true
 			m.OmitBccHeader = true
-			m.MessageID = "<golden.1@sunbeam.agency>"
-			m.ReplyTo = "replies@sunbeam.agency"
+			m.MessageID = "<sender1@example.com>"
+			m.ReplyTo = "replies@example.com"
 		}},
 	}
 	cases := []struct {
@@ -256,7 +256,7 @@ func TestMIMEBodiesDoNotContainHeaders(t *testing.T) {
 			t.Run(provider.name+"/"+tc.name, func(t *testing.T) {
 				msg := Message{
 					To: []string{"alex@example.com"}, Cc: []string{"cc@example.com"}, Bcc: []string{"hidden@example.com"},
-					Subject: "Hello", Text: tc.text, HTML: tc.html, Account: "misbah@sunbeam.agency", Date: sentAt,
+					Subject: "Hello", Text: tc.text, HTML: tc.html, Account: "you@example.com", Date: sentAt,
 				}
 				if tc.attach {
 					msg.Attachments = []string{attachment}

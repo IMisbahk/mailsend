@@ -25,8 +25,8 @@ func sentCheckCmd() *cobra.Command {
 		Long: `Search the account's Sent folder. Gmail accounts use the Gmail API. SMTP accounts with IMAP search the Sent mailbox (SPECIAL-USE \Sent, or Sent, Sent Items, Sent Messages, INBOX.Sent). Exit 0 means nothing matched. Exit 3 means at least one message matched. Exit 2 means the search failed, including a Gmail token that does not have gmail.readonly or an SMTP account without IMAP.
 
 Existing send-only Gmail tokens keep working for mailsend send. This command does not. Re-run mailsend login after upgrading so Google grants the read scope. A 403 from a missing scope is reported as "scope missing, re-run mailsend login" and is not treated as an empty Sent folder. An SMTP account needs mailsend account set-imap before this command can search.`,
-		Example: `  mailsend sent-check --account sunbeam --to ada@example.com --since 30d --json
-  mailsend sent-check --account gobitsnbytes --to ada@example.com --subject "Hello" --json`,
+		Example: `  mailsend sent-check --account acme --to ada@example.com --since 30d --json
+  mailsend sent-check --account example-account --to ada@example.com --subject "Hello" --json`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			to = strings.TrimSpace(to)
 			if to == "" {

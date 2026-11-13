@@ -130,8 +130,8 @@ Read the password from an interactive prompt, from stdin with --password-stdin, 
 Optional IMAP flags store the mailbox server in the same account. --imap-host defaults to the SMTP host, --imap-port to 993, --imap-tls to ssl, and --imap-username to the SMTP username. The SMTP password is reused. To enable IMAP on an account that already has a password, use mailsend account set-imap.
 
 Example:
-  mailsend account add sunbeam-smtp --provider smtp --host mail.example.com --port 587 --tls starttls --username misbah@sunbeam.agency --from misbah@sunbeam.agency
-  mailsend account set-imap gobitsnbytes`,
+  mailsend account add acme-smtp --provider smtp --host mail.example.com --port 587 --tls starttls --username you@example.com --from you@example.com
+  mailsend account set-imap example-account`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			switch strings.ToLower(strings.TrimSpace(provider)) {
@@ -187,7 +187,7 @@ Example:
 	cmd.Flags().IntVar(&port, "port", 0, "SMTP port (default 587 for starttls, 465 for ssl, 25 for none)")
 	cmd.Flags().StringVar(&tlsMode, "tls", smtp.TLSStartTLS, "TLS mode: starttls, ssl, or none")
 	cmd.Flags().StringVar(&username, "username", "", "SMTP username")
-	cmd.Flags().StringVar(&from, "from", "", "From address, for example misbah@sunbeam.agency")
+	cmd.Flags().StringVar(&from, "from", "", "From address, for example you@example.com")
 	cmd.Flags().StringVar(&replyTo, "reply-to", "", "Optional default Reply-To address")
 	cmd.Flags().BoolVar(&passwordStdin, "password-stdin", false, "Read the SMTP password from stdin")
 	addIMAPFlags(cmd, &imapFlags)
@@ -204,8 +204,8 @@ func accountSetIMAPCmd() *cobra.Command {
 The password already stored for SMTP is reused. Omit a flag to keep the current value, or to use the default when IMAP is not configured yet. Defaults are the SMTP host, port 993, TLS mode ssl, and the SMTP username.
 
 Example:
-  mailsend account set-imap gobitsnbytes
-  mailsend account set-imap gobitsnbytes --imap-host mail.gobitsnbytes.org --imap-port 993 --imap-tls ssl`,
+  mailsend account set-imap example-account
+  mailsend account set-imap example-account --imap-host mail.example.com --imap-port 993 --imap-tls ssl`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := auth.ValidateAccountName(args[0]); err != nil {

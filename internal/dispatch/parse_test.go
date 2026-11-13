@@ -14,7 +14,7 @@ func TestParseJSONSpacesEmailsAndKeepsExplicitTime(t *testing.T) {
 	path := filepath.Join(dir, "india.json")
 	body := []byte(`{
 	  "label": "India",
-	  "account": "sunbeam",
+	  "account": "acme",
 	  "start": "2026-10-21T09:00:00+05:30",
 	  "interval": "5m",
 	  "timezone": "Asia/Kolkata",
@@ -35,7 +35,7 @@ func TestParseJSONSpacesEmailsAndKeepsExplicitTime(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if batch.Account != "sunbeam" || batch.Label != "India" || batch.IntervalSeconds != 300 || batch.DailyCap != 95 {
+	if batch.Account != "acme" || batch.Label != "India" || batch.IntervalSeconds != 300 || batch.DailyCap != 95 {
 		t.Fatalf("batch %#v", batch)
 	}
 	if len(batch.Holds) != 2 || !filepath.IsAbs(batch.Holds[0].Path) {
@@ -72,7 +72,7 @@ func TestParseCSVRendersTemplateColumns(t *testing.T) {
 	}
 	start := time.Date(2026, 10, 21, 9, 0, 0, 0, time.UTC)
 	batch, items, err := ParseBatchFile(path, ParseDefaults{
-		Account: "sunbeam", HasStart: true, Start: start, HasInterval: true, Interval: 5 * time.Minute,
+		Account: "acme", HasStart: true, Start: start, HasInterval: true, Interval: 5 * time.Minute,
 	}, func(name string) (string, string, string, error) {
 		if name != "outreach" {
 			t.Fatalf("template %s", name)

@@ -26,7 +26,7 @@ func TestKeychainGetTimesOut(t *testing.T) {
 		return "", nil
 	}
 	started := time.Now()
-	_, err := secretGet("token:sunbeam")
+	_, err := secretGet("token:acme")
 	if err == nil || !strings.Contains(err.Error(), "OS keychain did not respond") {
 		t.Fatalf("error %v", err)
 	}

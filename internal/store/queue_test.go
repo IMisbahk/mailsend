@@ -10,7 +10,7 @@ func TestQueueClaimIsDurableAndCannotBeClaimedTwice(t *testing.T) {
 	db := openQueueDB(t)
 	when := time.Date(2026, 10, 21, 10, 0, 0, 0, time.UTC)
 	id, err := db.InsertQueueBatch(QueueBatch{
-		ID: "batch-a", Account: "sunbeam", Label: "India", Status: "active", IntervalSeconds: 300, StartAt: FormatStamp(when),
+		ID: "batch-a", Account: "acme", Label: "India", Status: "active", IntervalSeconds: 300, StartAt: FormatStamp(when),
 	}, []QueueItem{{
 		Position: 0, Email: "a@example.com", Subject: "Hello", Body: "Hi", Step: "first", ScheduledAt: FormatStamp(when),
 	}})
@@ -47,11 +47,11 @@ func TestQueueClaimIsDurableAndCannotBeClaimedTwice(t *testing.T) {
 	if err = reopened.FinishQueueItem(again.ID, "sent", "gmail-1", "", when.Add(time.Second)); err != nil {
 		t.Fatal(err)
 	}
-	sent, err := reopened.SentCountSince("sunbeam", when)
+	sent, err := reopened.SentCountSince("acme", when)
 	if err != nil || sent != 1 {
 		t.Fatalf("sent count %d %v", sent, err)
 	}
-	latest, ok, err := reopened.LatestSentAt("sunbeam")
+	latest, ok, err := reopened.LatestSentAt("acme")
 	if err != nil || !ok || !latest.Equal(when.Add(time.Second)) {
 		t.Fatalf("latest %s ok %v err %v", latest, ok, err)
 	}

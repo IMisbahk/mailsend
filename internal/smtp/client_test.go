@@ -23,7 +23,7 @@ func testClient(t *testing.T, server *smtpfake.Server, mode, password string) *C
 	}
 	client, err := New(Config{
 		Host: server.Host(), Port: server.Port(), TLSMode: mode,
-		Username: "misbah@sunbeam.agency", Password: password, From: "misbah@sunbeam.agency",
+		Username: "you@example.com", Password: password, From: "you@example.com",
 		TLSConfig: &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12},
 	})
 	if err != nil {
@@ -42,7 +42,7 @@ func sampleMessage(t *testing.T) mailmsg.BuiltMessage {
 	built, err := (mailmsg.Message{
 		To: []string{"alex@example.com"}, Cc: []string{"cc@example.com"}, Bcc: []string{"hidden@example.com"},
 		Subject: "Café", Text: "plain line\r\n.dot line\r\nend", HTML: "<b>café</b>",
-		FromName: "Misbah", Account: "misbah@sunbeam.agency", ReplyTo: "replies@sunbeam.agency",
+		FromName: "Example Sender", Account: "you@example.com", ReplyTo: "replies@example.com",
 		Attachments: []string{attachment}, IncludeMessageID: true, OmitBccHeader: true,
 	}).Build()
 	if err != nil {
@@ -52,7 +52,7 @@ func sampleMessage(t *testing.T) mailmsg.BuiltMessage {
 }
 
 func TestSTARTTLSAuthAndSend(t *testing.T) {
-	server, err := smtpfake.Listen(smtpfake.Options{Mode: smtpfake.ModeStartTLS, Username: "misbah@sunbeam.agency", Password: "secret"})
+	server, err := smtpfake.Listen(smtpfake.Options{Mode: smtpfake.ModeStartTLS, Username: "you@example.com", Password: "secret"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,7 +75,7 @@ func TestSTARTTLSAuthAndSend(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.MailFrom != "misbah@sunbeam.agency" {
+	if got.MailFrom != "you@example.com" {
 		t.Fatalf("envelope from %q", got.MailFrom)
 	}
 	if strings.Join(got.Recipients, ",") != "alex@example.com,cc@example.com,hidden@example.com" {
@@ -94,7 +94,7 @@ func TestSTARTTLSAuthAndSend(t *testing.T) {
 }
 
 func TestAuthFailureIsPermanent(t *testing.T) {
-	server, err := smtpfake.Listen(smtpfake.Options{Mode: smtpfake.ModeStartTLS, Username: "misbah@sunbeam.agency", Password: "secret"})
+	server, err := smtpfake.Listen(smtpfake.Options{Mode: smtpfake.ModeStartTLS, Username: "you@example.com", Password: "secret"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,7 +110,7 @@ func TestAuthFailureIsPermanent(t *testing.T) {
 }
 
 func TestImplicitTLSAndLogin(t *testing.T) {
-	server, err := smtpfake.Listen(smtpfake.Options{Mode: smtpfake.ModeSSL, Username: "misbah@sunbeam.agency", Password: "secret", LoginOnly: true})
+	server, err := smtpfake.Listen(smtpfake.Options{Mode: smtpfake.ModeSSL, Username: "you@example.com", Password: "secret", LoginOnly: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,14 +128,14 @@ func TestImplicitTLSAndLogin(t *testing.T) {
 }
 
 func TestCleartextModeDoesNotUseTLS(t *testing.T) {
-	server, err := smtpfake.Listen(smtpfake.Options{Mode: smtpfake.ModeNone, Username: "misbah@sunbeam.agency", Password: "secret"})
+	server, err := smtpfake.Listen(smtpfake.Options{Mode: smtpfake.ModeNone, Username: "you@example.com", Password: "secret"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer server.Close()
 	client, err := New(Config{
 		Host: server.Host(), Port: server.Port(), TLSMode: TLSNone,
-		Username: "misbah@sunbeam.agency", Password: "secret", From: "misbah@sunbeam.agency",
+		Username: "you@example.com", Password: "secret", From: "you@example.com",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -152,14 +152,14 @@ func TestCleartextModeDoesNotUseTLS(t *testing.T) {
 
 func TestTemporaryAndPermanentReplies(t *testing.T) {
 	temporary, err := smtpfake.Listen(smtpfake.Options{
-		Mode: smtpfake.ModeNone, Username: "misbah@sunbeam.agency", Password: "secret",
+		Mode: smtpfake.ModeNone, Username: "you@example.com", Password: "secret",
 		FailStage: "rcpt", FailCode: 450, FailMessage: "mailbox busy",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer temporary.Close()
-	client, err := New(Config{Host: temporary.Host(), Port: temporary.Port(), TLSMode: TLSNone, Username: "misbah@sunbeam.agency", Password: "secret", From: "misbah@sunbeam.agency"})
+	client, err := New(Config{Host: temporary.Host(), Port: temporary.Port(), TLSMode: TLSNone, Username: "you@example.com", Password: "secret", From: "you@example.com"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -171,14 +171,14 @@ func TestTemporaryAndPermanentReplies(t *testing.T) {
 		t.Fatalf("temporary err ambiguous=%v %#v %v", ambiguous, smtpErr, err)
 	}
 	permanent, err := smtpfake.Listen(smtpfake.Options{
-		Mode: smtpfake.ModeNone, Username: "misbah@sunbeam.agency", Password: "secret",
+		Mode: smtpfake.ModeNone, Username: "you@example.com", Password: "secret",
 		FailStage: "data", FailCode: 550, FailMessage: "user unknown",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer permanent.Close()
-	client, err = New(Config{Host: permanent.Host(), Port: permanent.Port(), TLSMode: TLSNone, Username: "misbah@sunbeam.agency", Password: "secret", From: "misbah@sunbeam.agency"})
+	client, err = New(Config{Host: permanent.Host(), Port: permanent.Port(), TLSMode: TLSNone, Username: "you@example.com", Password: "secret", From: "you@example.com"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -194,12 +194,12 @@ func TestTemporaryAndPermanentReplies(t *testing.T) {
 }
 
 func TestLostDataResponseIsUncertain(t *testing.T) {
-	server, err := smtpfake.Listen(smtpfake.Options{Mode: smtpfake.ModeNone, Username: "misbah@sunbeam.agency", Password: "secret", DropAfterData: true})
+	server, err := smtpfake.Listen(smtpfake.Options{Mode: smtpfake.ModeNone, Username: "you@example.com", Password: "secret", DropAfterData: true})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer server.Close()
-	client, err := New(Config{Host: server.Host(), Port: server.Port(), TLSMode: TLSNone, Username: "misbah@sunbeam.agency", Password: "secret", From: "misbah@sunbeam.agency"})
+	client, err := New(Config{Host: server.Host(), Port: server.Port(), TLSMode: TLSNone, Username: "you@example.com", Password: "secret", From: "you@example.com"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -213,13 +213,13 @@ func TestLostDataResponseIsUncertain(t *testing.T) {
 }
 
 func TestTLSVerificationRejectsUnknownCertificate(t *testing.T) {
-	server, err := smtpfake.Listen(smtpfake.Options{Mode: smtpfake.ModeStartTLS, Username: "misbah@sunbeam.agency", Password: "secret"})
+	server, err := smtpfake.Listen(smtpfake.Options{Mode: smtpfake.ModeStartTLS, Username: "you@example.com", Password: "secret"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer server.Close()
 	t.Setenv("MAILSEND_SMTP_CA_FILE", "")
-	client, err := New(Config{Host: server.Host(), Port: server.Port(), TLSMode: TLSStartTLS, Username: "misbah@sunbeam.agency", Password: "secret", From: "misbah@sunbeam.agency"})
+	client, err := New(Config{Host: server.Host(), Port: server.Port(), TLSMode: TLSStartTLS, Username: "you@example.com", Password: "secret", From: "you@example.com"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -231,14 +231,14 @@ func TestTLSVerificationRejectsUnknownCertificate(t *testing.T) {
 }
 
 func TestNormalizeRejectsHardcodedOmissions(t *testing.T) {
-	if _, err := Normalize(Config{TLSMode: "starttls", Username: "misbah", From: "misbah@sunbeam.agency"}); err == nil {
+	if _, err := Normalize(Config{TLSMode: "starttls", Username: "sender1", From: "you@example.com"}); err == nil {
 		t.Fatal("missing host was accepted")
 	}
-	cfg, err := Normalize(Config{Host: "mail.example.com", TLSMode: "", Username: "misbah", From: "Misbah <misbah@sunbeam.agency>"})
+	cfg, err := Normalize(Config{Host: "mail.example.com", TLSMode: "", Username: "sender1", From: "Example Sender <you@example.com>"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Port != 587 || cfg.TLSMode != TLSStartTLS || cfg.From != "misbah@sunbeam.agency" {
+	if cfg.Port != 587 || cfg.TLSMode != TLSStartTLS || cfg.From != "you@example.com" {
 		t.Fatalf("normalized %#v", cfg)
 	}
 	if _, err = NormalizeTLS("smtp.gmail.com"); err == nil {
