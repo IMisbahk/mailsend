@@ -7,9 +7,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/IMisbahk/mailsend/internal/auth"
-	"github.com/IMisbahk/mailsend/internal/imap"
-	"github.com/IMisbahk/mailsend/internal/smtp"
+	"github.com/example-account/mailsend/internal/auth"
+	"github.com/example-account/mailsend/internal/imap"
+	"github.com/example-account/mailsend/internal/smtp"
 	"github.com/spf13/cobra"
 )
 
@@ -26,8 +26,8 @@ func inboxCmd() *cobra.Command {
 The account must be SMTP with IMAP configured. Run mailsend account set-imap to enable it. The SMTP password in the OS keychain is reused.
 
 --since defaults to 7d. 0s lists without a time limit.`,
-		Example: `  mailsend inbox --account gobitsnbytes
-  mailsend inbox --account gobitsnbytes --unread --since 7d --from ada@example.com --json`,
+		Example: `  mailsend inbox --account example-account
+  mailsend inbox --account example-account --unread --since 7d --from ada@example.com --json`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if limit < 1 || limit > 1000 {
@@ -94,7 +94,7 @@ func readCmd() *cobra.Command {
 		Long: `Show headers and the text/plain body of one message. If there is no plain part, the text/html part is shown with tags removed. Attachment names and sizes are listed; attachment bytes are not downloaded.
 
 The message stays unread unless --mark-read is set. The mailbox is opened with EXAMINE unless --mark-read selects it and sets the \Seen flag.`,
-		Example: `  mailsend read 42 --account gobitsnbytes
+		Example: `  mailsend read 42 --account example-account
   mailsend read 42 --folder INBOX --mark-read --json`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {

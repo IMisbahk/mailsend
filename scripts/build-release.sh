@@ -12,7 +12,7 @@ build_one() {
   if [[ "$goos" == "windows" ]]; then ext=".exe"; fi
   echo "Building mailsend for ${goos}/${goarch}"
   CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" go build \
-    -trimpath -ldflags "-s -w -X github.com/IMisbahk/mailsend/internal/cli.version=${version}" \
+    -trimpath -ldflags "-s -w -X github.com/example-account/mailsend/internal/cli.version=${version}" \
     -o "$out/mailsend-${goos}-${goarch}${ext}" ./cmd/mailsend
 }
 

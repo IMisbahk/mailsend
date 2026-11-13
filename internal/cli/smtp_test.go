@@ -16,10 +16,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/IMisbahk/mailsend/internal/auth"
-	mailmsg "github.com/IMisbahk/mailsend/internal/mail"
-	"github.com/IMisbahk/mailsend/internal/smtpfake"
-	"github.com/IMisbahk/mailsend/internal/store"
+	"github.com/example-account/mailsend/internal/auth"
+	mailmsg "github.com/example-account/mailsend/internal/mail"
+	"github.com/example-account/mailsend/internal/smtpfake"
+	"github.com/example-account/mailsend/internal/store"
 	"github.com/zalando/go-keyring"
 )
 
@@ -74,9 +74,9 @@ func addSMTPAccount(t *testing.T, server *smtpfake.Server, password string) {
 		"--host", server.Host(),
 		"--port", strconv.Itoa(server.Port()),
 		"--tls", "starttls",
-		"--username", "misbah@sunbeam.agency",
-		"--from", "misbah@sunbeam.agency",
-		"--reply-to", "replies@sunbeam.agency",
+		"--username", "you@example.com",
+		"--from", "you@example.com",
+		"--reply-to", "replies@example.com",
 		"--json")
 	if err != nil {
 		t.Fatal(err)
@@ -85,15 +85,15 @@ func addSMTPAccount(t *testing.T, server *smtpfake.Server, password string) {
 
 func TestAccountAddRejectsPasswordFlagAndStoresSecret(t *testing.T) {
 	dir := useTestConfig(t)
-	_, _, err := executeCLI(t, "", "account", "add", "agency", "--provider", "smtp", "--password", "secret", "--host", "mail.example.com", "--from", "misbah@sunbeam.agency", "--username", "misbah")
+	_, _, err := executeCLI(t, "", "account", "add", "agency", "--provider", "smtp", "--password", "secret", "--host", "mail.example.com", "--from", "you@example.com", "--username", "sender1")
 	if err == nil || !strings.Contains(err.Error(), "unknown flag: --password") {
 		t.Fatalf("password flag error %v", err)
 	}
-	_, _, err = executeCLI(t, "", "account", "add", "agency", "--provider", "smtp", "--host", "mail.example.com", "--username", "misbah", "--from", "misbah@sunbeam.agency")
+	_, _, err = executeCLI(t, "", "account", "add", "agency", "--provider", "smtp", "--host", "mail.example.com", "--username", "sender1", "--from", "you@example.com")
 	if err == nil || !strings.Contains(err.Error(), "MAILSEND_SMTP_PASSWORD") {
 		t.Fatalf("missing password error %v", err)
 	}
-	stdout, _, err := executeCLI(t, "stdin-secret\n", "account", "add", "agency", "--provider", "smtp", "--host", "mail.example.com", "--username", "misbah@sunbeam.agency", "--from", "misbah@sunbeam.agency", "--password-stdin", "--json")
+	stdout, _, err := executeCLI(t, "stdin-secret\n", "account", "add", "agency", "--provider", "smtp", "--host", "mail.example.com", "--username", "you@example.com", "--from", "you@example.com", "--password-stdin", "--json")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,19 +112,19 @@ func TestAccountAddRejectsPasswordFlagAndStoresSecret(t *testing.T) {
 	}
 }
 
-func TestLegacySunbeamAccountIsStillGmail(t *testing.T) {
+func TestLegacyAcmeAccountIsStillGmail(t *testing.T) {
 	dir := useTestConfig(t)
-	original := []byte("{\n  \"default\": \"sunbeam\",\n  \"accounts\": [\"sunbeam\"],\n  \"emails\": {\n    \"sunbeam\": \"misbah@sunbeam.agency\"\n  }\n}\n")
+	original := []byte("{\n  \"default\": \"acme\",\n  \"accounts\": [\"acme\"],\n  \"emails\": {\n    \"acme\": \"you@example.com\"\n  }\n}\n")
 	if err := os.WriteFile(filepath.Join(dir, "accounts.json"), original, 0600); err != nil {
 		t.Fatal(err)
 	}
-	_, _, err := executeCLI(t, "", "quota", "--account", "sunbeam", "--json")
+	_, _, err := executeCLI(t, "", "quota", "--account", "acme", "--json")
 	if err == nil || !strings.Contains(err.Error(), "not logged in") {
 		t.Fatalf("gmail quota should still require login, got %v", err)
 	}
-	_, _, err = executeCLI(t, "", "account", "add", "sunbeam", "--provider", "smtp", "--host", "mail.example.com", "--username", "misbah", "--from", "misbah@sunbeam.agency")
+	_, _, err = executeCLI(t, "", "account", "add", "acme", "--provider", "smtp", "--host", "mail.example.com", "--username", "sender1", "--from", "you@example.com")
 	t.Setenv("MAILSEND_SMTP_PASSWORD", "secret")
-	_, _, err = executeCLI(t, "", "account", "add", "sunbeam", "--provider", "smtp", "--host", "mail.example.com", "--username", "misbah", "--from", "misbah@sunbeam.agency")
+	_, _, err = executeCLI(t, "", "account", "add", "acme", "--provider", "smtp", "--host", "mail.example.com", "--username", "sender1", "--from", "you@example.com")
 	if err == nil || !strings.Contains(err.Error(), "Gmail") {
 		t.Fatalf("overwrite error %v", err)
 	}
@@ -133,13 +133,13 @@ func TestLegacySunbeamAccountIsStillGmail(t *testing.T) {
 		t.Fatal(err)
 	}
 	if string(got) != string(original) {
-		t.Fatalf("sunbeam manifest changed:\n%s", got)
+		t.Fatalf("acme manifest changed:\n%s", got)
 	}
 }
 
 func TestSMTPSendHistoryQuotaAndErrors(t *testing.T) {
 	dir := useTestConfig(t)
-	server, err := smtpfake.Listen(smtpfake.Options{Mode: smtpfake.ModeStartTLS, Username: "misbah@sunbeam.agency", Password: "secret"})
+	server, err := smtpfake.Listen(smtpfake.Options{Mode: smtpfake.ModeStartTLS, Username: "you@example.com", Password: "secret"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -185,7 +185,7 @@ func TestSMTPSendHistoryQuotaAndErrors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	stdout, _, err = executeCLI(t, "", "send", "--account", "agency", "--to", "alex@example.com", "--cc", "cc@example.com", "--bcc", "hidden@example.com", "--subject", "Hello", "--body", "Hi there", "--html-file", writeFile(t, "<b>Hi</b>"), "--from-name", "Misbah", "--json")
+	stdout, _, err = executeCLI(t, "", "send", "--account", "agency", "--to", "alex@example.com", "--cc", "cc@example.com", "--bcc", "hidden@example.com", "--subject", "Hello", "--body", "Hi there", "--html-file", writeFile(t, "<b>Hi</b>"), "--from-name", "Example Sender", "--json")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -193,14 +193,14 @@ func TestSMTPSendHistoryQuotaAndErrors(t *testing.T) {
 	if err = json.Unmarshal([]byte(stdout), &sent); err != nil {
 		t.Fatalf("sent json %s: %v", stdout, err)
 	}
-	if sent["status"] != "sent" || !strings.Contains(sent["message_id"].(string), "@sunbeam.agency") {
+	if sent["status"] != "sent" || !strings.Contains(sent["message_id"].(string), "@example.com") {
 		t.Fatalf("sent %#v", sent)
 	}
 	submission, err := server.WaitSubmission(time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if submission.MailFrom != "misbah@sunbeam.agency" {
+	if submission.MailFrom != "you@example.com" {
 		t.Fatalf("envelope %q", submission.MailFrom)
 	}
 	body := string(submission.Data)
@@ -216,7 +216,7 @@ func TestSMTPSendHistoryQuotaAndErrors(t *testing.T) {
 	if !foundHidden {
 		t.Fatalf("bcc missing from envelope %#v", submission.Recipients)
 	}
-	if !strings.Contains(body, "Misbah") || !strings.Contains(body, "Hi there") || !strings.Contains(body, "<b>Hi</b>") || !strings.Contains(body, "replies@sunbeam.agency") {
+	if !strings.Contains(body, "Example Sender") || !strings.Contains(body, "Hi there") || !strings.Contains(body, "<b>Hi</b>") || !strings.Contains(body, "replies@example.com") {
 		t.Fatalf("message body:\n%s", body)
 	}
 	db, err := store.Open(filepath.Join(dir, "mailsend.sqlite3"))
@@ -229,14 +229,14 @@ func TestSMTPSendHistoryQuotaAndErrors(t *testing.T) {
 		t.Fatalf("history %#v %v", history, err)
 	}
 
-	bad, err := smtpfake.Listen(smtpfake.Options{Mode: smtpfake.ModeStartTLS, Username: "misbah@sunbeam.agency", Password: "secret", FailStage: "data", FailCode: 550, FailMessage: "user unknown"})
+	bad, err := smtpfake.Listen(smtpfake.Options{Mode: smtpfake.ModeStartTLS, Username: "you@example.com", Password: "secret", FailStage: "data", FailCode: 550, FailMessage: "user unknown"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer bad.Close()
 	writeCA(t, bad.Certificate)
 	t.Setenv("MAILSEND_SMTP_PASSWORD", "secret")
-	if _, err = auth.SaveSMTPAccount("bounce", auth.ProviderConfig{Host: bad.Host(), Port: bad.Port(), TLS: "starttls", Username: "misbah@sunbeam.agency", From: "misbah@sunbeam.agency"}, "secret"); err != nil {
+	if _, err = auth.SaveSMTPAccount("bounce", auth.ProviderConfig{Host: bad.Host(), Port: bad.Port(), TLS: "starttls", Username: "you@example.com", From: "you@example.com"}, "secret"); err != nil {
 		t.Fatal(err)
 	}
 	_, stderr, err := executeCLI(t, "", "--json", "send", "--account", "bounce", "--to", "alex@example.com", "--subject", "Nope", "--body", "Hi")
@@ -262,13 +262,13 @@ func TestSMTPSendHistoryQuotaAndErrors(t *testing.T) {
 
 func TestSMTPRetryThenSuccess(t *testing.T) {
 	useTestConfig(t)
-	server, err := smtpfake.Listen(smtpfake.Options{Mode: smtpfake.ModeNone, Username: "misbah@sunbeam.agency", Password: "secret", FailRcpts: 1, FailCode: 450, FailMessage: "mailbox busy"})
+	server, err := smtpfake.Listen(smtpfake.Options{Mode: smtpfake.ModeNone, Username: "you@example.com", Password: "secret", FailRcpts: 1, FailCode: 450, FailMessage: "mailbox busy"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer server.Close()
 	t.Setenv("MAILSEND_SMTP_PASSWORD", "secret")
-	if _, err = auth.SaveSMTPAccount("agency", auth.ProviderConfig{Host: server.Host(), Port: server.Port(), TLS: "none", Username: "misbah@sunbeam.agency", From: "misbah@sunbeam.agency"}, "secret"); err != nil {
+	if _, err = auth.SaveSMTPAccount("agency", auth.ProviderConfig{Host: server.Host(), Port: server.Port(), TLS: "none", Username: "you@example.com", From: "you@example.com"}, "secret"); err != nil {
 		t.Fatal(err)
 	}
 	stdout, _, err := executeCLI(t, "", "send", "--account", "agency", "--to", "alex@example.com", "--subject", "Retry", "--body", "Hi", "--json")
@@ -296,23 +296,23 @@ func TestGmailSenderStillPostsEncodedRaw(t *testing.T) {
 		}
 	}))
 	defer server.Close()
-	sender := gmailSender{client: &auth.Client{HTTP: server.Client(), BaseURL: server.URL, Account: auth.Account{Email: "misbah@sunbeam.agency"}}}
+	sender := gmailSender{client: &auth.Client{HTTP: server.Client(), BaseURL: server.URL, Account: auth.Account{Email: "you@example.com"}}}
 	id, ambiguous, err := sender.Send(context.Background(), mailmsg.BuiltMessage{Raw: "encoded-body"})
 	if err != nil || ambiguous || id != "gmail-1" || got != "encoded-body" {
 		t.Fatalf("gmail send id %q raw %q ambiguous %v err %v", id, got, ambiguous, err)
 	}
-	if sender.Provider() != auth.ProviderGmail || sender.FromAddress() != "misbah@sunbeam.agency" {
+	if sender.Provider() != auth.ProviderGmail || sender.FromAddress() != "you@example.com" {
 		t.Fatalf("gmail sender identity %s %s", sender.Provider(), sender.FromAddress())
 	}
 }
 
 func TestGmailDryRunPlainRFC822(t *testing.T) {
 	dir := useTestConfig(t)
-	manifest := []byte("{\n  \"default\": \"sunbeam\",\n  \"accounts\": [\"sunbeam\"],\n  \"emails\": {\n    \"sunbeam\": \"misbah@sunbeam.agency\"\n  }\n}\n")
+	manifest := []byte("{\n  \"default\": \"acme\",\n  \"accounts\": [\"acme\"],\n  \"emails\": {\n    \"acme\": \"you@example.com\"\n  }\n}\n")
 	if err := os.WriteFile(filepath.Join(dir, "accounts.json"), manifest, 0600); err != nil {
 		t.Fatal(err)
 	}
-	built, err := composeSendMessage("sunbeam", mailmsg.Message{To: []string{"alex@example.com"}, Subject: "Hello", Text: "Hi from mailsend"})
+	built, err := composeSendMessage("acme", mailmsg.Message{To: []string{"alex@example.com"}, Subject: "Hello", Text: "Hi from mailsend"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -321,7 +321,7 @@ func TestGmailDryRunPlainRFC822(t *testing.T) {
 	if strings.Contains(string(built.MIME), "\r\n\r\nContent-Type:") {
 		t.Fatalf("content headers are outside the header block:\n%s", built.MIME)
 	}
-	stdout, stderr, err := executeCLI(t, "", "send", "--account", "sunbeam", "--to", "alex@example.com", "--subject", "Hello", "--body", "Hi from mailsend", "--dry-run")
+	stdout, stderr, err := executeCLI(t, "", "send", "--account", "acme", "--to", "alex@example.com", "--subject", "Hello", "--body", "Hi from mailsend", "--dry-run")
 	if err != nil {
 		t.Fatalf("dry-run error %v stderr %s", err, stderr)
 	}
@@ -331,7 +331,7 @@ func TestGmailDryRunPlainRFC822(t *testing.T) {
 	db, err := store.Open(filepath.Join(dir, "mailsend.sqlite3"))
 	if err == nil {
 		defer db.Close()
-		history, histErr := db.History("", 10, "sunbeam")
+		history, histErr := db.History("", 10, "acme")
 		if histErr != nil {
 			t.Fatal(histErr)
 		}
@@ -343,13 +343,13 @@ func TestGmailDryRunPlainRFC822(t *testing.T) {
 
 func TestPlainBodyFileSendKeepsHeadersOutOfTheBody(t *testing.T) {
 	useTestConfig(t)
-	server, err := smtpfake.Listen(smtpfake.Options{Mode: smtpfake.ModeNone, Username: "misbah@sunbeam.agency", Password: "secret"})
+	server, err := smtpfake.Listen(smtpfake.Options{Mode: smtpfake.ModeNone, Username: "you@example.com", Password: "secret"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer server.Close()
 	writeCA(t, server.Certificate)
-	if _, err = auth.SaveSMTPAccount("agency", auth.ProviderConfig{Host: server.Host(), Port: server.Port(), TLS: "none", Username: "misbah@sunbeam.agency", From: "misbah@sunbeam.agency"}, "secret"); err != nil {
+	if _, err = auth.SaveSMTPAccount("agency", auth.ProviderConfig{Host: server.Host(), Port: server.Port(), TLS: "none", Username: "you@example.com", From: "you@example.com"}, "secret"); err != nil {
 		t.Fatal(err)
 	}
 	bodyPath := filepath.Join(t.TempDir(), "note.txt")
@@ -375,11 +375,11 @@ func TestPlainBodyFileSendKeepsHeadersOutOfTheBody(t *testing.T) {
 		_, _ = w.Write([]byte(`{"id":"gmail-1"}`))
 	}))
 	defer gmail.Close()
-	built, err := (mailmsg.Message{To: []string{"alex@example.com"}, Subject: "Hello", Text: "Hello from a body file\n", Account: "misbah@sunbeam.agency"}).Build()
+	built, err := (mailmsg.Message{To: []string{"alex@example.com"}, Subject: "Hello", Text: "Hello from a body file\n", Account: "you@example.com"}).Build()
 	if err != nil {
 		t.Fatal(err)
 	}
-	sender := gmailSender{client: &auth.Client{HTTP: gmail.Client(), BaseURL: gmail.URL, Account: auth.Account{Email: "misbah@sunbeam.agency"}}}
+	sender := gmailSender{client: &auth.Client{HTTP: gmail.Client(), BaseURL: gmail.URL, Account: auth.Account{Email: "you@example.com"}}}
 	if _, _, err = sender.Send(context.Background(), built); err != nil {
 		t.Fatal(err)
 	}

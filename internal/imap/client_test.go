@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/IMisbahk/mailsend/internal/imapfake"
+	"github.com/example-account/mailsend/internal/imapfake"
 	"github.com/emersion/go-imap/v2"
 )
 

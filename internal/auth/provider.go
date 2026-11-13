@@ -6,7 +6,7 @@ import (
 	"net/mail"
 	"strings"
 
-	"github.com/IMisbahk/mailsend/internal/smtp"
+	"github.com/example-account/mailsend/internal/smtp"
 	"github.com/zalando/go-keyring"
 )
 
@@ -47,7 +47,7 @@ type IMAPEndpoint struct {
 func smtpPasswordKey(name string) string { return "smtp-password:" + name }
 
 // LookupProvider reports how an account sends. Accounts saved before SMTP
-// support, including a manifest that only lists "sunbeam", stay Gmail.
+// support, including a manifest that only lists "acme", stay Gmail.
 func LookupProvider(name string) (ProviderConfig, error) {
 	name = accountName(name)
 	if err := ValidateAccountName(name); err != nil {

@@ -1,7 +1,7 @@
 package cli
 
 import (
-	"github.com/IMisbahk/mailsend/internal/store"
+	"github.com/example-account/mailsend/internal/store"
 	"testing"
 )
 

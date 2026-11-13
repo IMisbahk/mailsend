@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/IMisbahk/mailsend/internal/auth"
+	"github.com/example-account/mailsend/internal/auth"
 )
 
 type hangTransport struct{}
@@ -36,7 +36,7 @@ func TestSentCheckHangingCallExitsWithinBudget(t *testing.T) {
 		sentCheckTimeout = previousBudget
 	})
 	started := time.Now()
-	stdout, stderr, err := executeCLI(t, "", "--debug", "--account", "sunbeam", "sent-check", "--to", "ada@example.com", "--since", "1d", "--json")
+	stdout, stderr, err := executeCLI(t, "", "--debug", "--account", "acme", "sent-check", "--to", "ada@example.com", "--since", "1d", "--json")
 	var status *statusExit
 	if !errors.As(err, &status) || status.code != 2 || status.err == nil || !strings.Contains(status.err.Error(), "timed out") {
 		t.Fatalf("exit %#v %v stdout %s stderr %s", status, err, stdout, stderr)
@@ -51,7 +51,7 @@ func TestSentCheckHangingCallExitsWithinBudget(t *testing.T) {
 
 func TestAccountUsesStoredEmailWhenIdentityHangs(t *testing.T) {
 	dir := useTestConfig(t)
-	manifest := []byte("{\n  \"default\": \"sunbeam\",\n  \"accounts\": [\"sunbeam\"],\n  \"emails\": {\n    \"sunbeam\": \"misbah@sunbeam.agency\"\n  }\n}\n")
+	manifest := []byte("{\n  \"default\": \"acme\",\n  \"accounts\": [\"acme\"],\n  \"emails\": {\n    \"acme\": \"you@example.com\"\n  }\n}\n")
 	if err := os.WriteFile(filepath.Join(dir, "accounts.json"), manifest, 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -64,7 +64,7 @@ func TestAccountUsesStoredEmailWhenIdentityHangs(t *testing.T) {
 	loadGmail = func(name string) (*auth.Client, error) {
 		return &auth.Client{
 			HTTP: hung.Client(), IdentityURL: hung.URL,
-			Account: auth.Account{Name: name, Email: "misbah@sunbeam.agency"},
+			Account: auth.Account{Name: name, Email: "you@example.com"},
 		}, nil
 	}
 	auth.IdentityTimeout = 200 * time.Millisecond
@@ -73,14 +73,14 @@ func TestAccountUsesStoredEmailWhenIdentityHangs(t *testing.T) {
 		auth.IdentityTimeout = previousTimeout
 	})
 	started := time.Now()
-	stdout, stderr, err := executeCLI(t, "", "--debug", "--account", "sunbeam", "account", "--json")
+	stdout, stderr, err := executeCLI(t, "", "--debug", "--account", "acme", "account", "--json")
 	if err != nil {
 		t.Fatalf("account %v %s %s", err, stdout, stderr)
 	}
 	if time.Since(started) > 2*time.Second {
 		t.Fatalf("account took %s", time.Since(started))
 	}
-	if !strings.Contains(stdout, "misbah@sunbeam.agency") || !strings.Contains(stdout, `"identity_error"`) {
+	if !strings.Contains(stdout, "you@example.com") || !strings.Contains(stdout, `"identity_error"`) {
 		t.Fatalf("stdout %s", stdout)
 	}
 	if !strings.Contains(stderr, "debug: account:") {
@@ -127,11 +127,11 @@ func TestSentCheckExitCodes(t *testing.T) {
 	defer server.Close()
 	previous := openGmailClient
 	openGmailClient = func(context.Context, string) (*auth.Client, error) {
-		return &auth.Client{HTTP: server.Client(), BaseURL: server.URL, Account: auth.Account{Name: "sunbeam", Email: "misbah@sunbeam.agency"}}, nil
+		return &auth.Client{HTTP: server.Client(), BaseURL: server.URL, Account: auth.Account{Name: "acme", Email: "you@example.com"}}, nil
 	}
 	t.Cleanup(func() { openGmailClient = previous })
 
-	stdout, stderr, err := executeCLI(t, "", "--account", "sunbeam", "sent-check", "--to", "ada@example.com", "--since", "30d", "--json")
+	stdout, stderr, err := executeCLI(t, "", "--account", "acme", "sent-check", "--to", "ada@example.com", "--since", "30d", "--json")
 	if err != nil {
 		t.Fatalf("empty %v %s %s", err, stdout, stderr)
 	}
@@ -140,7 +140,7 @@ func TestSentCheckExitCodes(t *testing.T) {
 	}
 
 	mode = "found"
-	stdout, stderr, err = executeCLI(t, "", "--account", "sunbeam", "sent-check", "--to", "ada@example.com", "--subject", "Hello", "--since", "7d", "--json")
+	stdout, stderr, err = executeCLI(t, "", "--account", "acme", "sent-check", "--to", "ada@example.com", "--subject", "Hello", "--since", "7d", "--json")
 	var status *statusExit
 	if !errors.As(err, &status) || status.code != 3 || status.err != nil {
 		t.Fatalf("found exit %#v %v stdout %s stderr %s", status, err, stdout, stderr)
@@ -157,7 +157,7 @@ func TestSentCheckExitCodes(t *testing.T) {
 	}
 
 	mode = "scope"
-	stdout, stderr, err = executeCLI(t, "", "--account", "sunbeam", "sent-check", "--to", "ada@example.com", "--json")
+	stdout, stderr, err = executeCLI(t, "", "--account", "acme", "sent-check", "--to", "ada@example.com", "--json")
 	status = nil
 	if !errors.As(err, &status) || status.code != 2 || status.err == nil || status.err.Error() != auth.ErrScopeMissing.Error() {
 		t.Fatalf("scope exit %#v %v stdout %s stderr %s", status, err, stdout, stderr)

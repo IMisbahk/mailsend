@@ -1,7 +1,7 @@
 package main
 
 import (
-	"github.com/IMisbahk/mailsend/internal/cli"
+	"github.com/example-account/mailsend/internal/cli"
 	"os"
 )
 

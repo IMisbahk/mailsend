@@ -18,7 +18,7 @@ import (
 	"strings"
 	"time"
 
-	mailmsg "github.com/IMisbahk/mailsend/internal/mail"
+	mailmsg "github.com/example-account/mailsend/internal/mail"
 )
 
 const (

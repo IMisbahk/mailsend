@@ -9,23 +9,23 @@ import (
 	"github.com/zalando/go-keyring"
 )
 
-func TestLegacySunbeamManifestStaysGmail(t *testing.T) {
+func TestLegacyAcmeManifestStaysGmail(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("MAILSEND_CONFIG_DIR", dir)
 	keyring.MockInit()
-	original := []byte("{\n  \"default\": \"sunbeam\",\n  \"accounts\": [\"sunbeam\"],\n  \"emails\": {\n    \"sunbeam\": \"misbah@sunbeam.agency\"\n  }\n}\n")
+	original := []byte("{\n  \"default\": \"acme\",\n  \"accounts\": [\"acme\"],\n  \"emails\": {\n    \"acme\": \"you@example.com\"\n  }\n}\n")
 	path := filepath.Join(dir, "accounts.json")
 	if err := os.WriteFile(path, original, 0600); err != nil {
 		t.Fatal(err)
 	}
-	cfg, err := LookupProvider("sunbeam")
+	cfg, err := LookupProvider("acme")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Provider != ProviderGmail || cfg.From != "misbah@sunbeam.agency" {
+	if cfg.Provider != ProviderGmail || cfg.From != "you@example.com" {
 		t.Fatalf("legacy account = %+v", cfg)
 	}
-	if !HasToken("sunbeam") && Authenticated("sunbeam") {
+	if !HasToken("acme") && Authenticated("acme") {
 		t.Fatal("legacy account should not look authenticated without a token")
 	}
 	got, err := os.ReadFile(path)
@@ -35,8 +35,8 @@ func TestLegacySunbeamManifestStaysGmail(t *testing.T) {
 	if string(got) != string(original) {
 		t.Fatalf("reading the account rewrote accounts.json:\n%s", got)
 	}
-	_, err = SaveSMTPAccount("sunbeam", ProviderConfig{
-		Host: "mail.example.com", Port: 587, TLS: "starttls", Username: "misbah@sunbeam.agency", From: "misbah@sunbeam.agency",
+	_, err = SaveSMTPAccount("acme", ProviderConfig{
+		Host: "mail.example.com", Port: 587, TLS: "starttls", Username: "you@example.com", From: "you@example.com",
 	}, strings.Repeat("s", 8))
 	if err == nil || !strings.Contains(err.Error(), "Gmail") {
 		t.Fatalf("expected refusal to replace the Gmail account, got %v", err)
@@ -48,7 +48,7 @@ func TestLegacySunbeamManifestStaysGmail(t *testing.T) {
 	if string(got) != string(original) {
 		t.Fatalf("failed SMTP add rewrote the Gmail manifest:\n%s", got)
 	}
-	if HasSMTPPassword("sunbeam") {
+	if HasSMTPPassword("acme") {
 		t.Fatal("rejected SMTP add left a password in the keychain")
 	}
 }
@@ -59,7 +59,7 @@ func TestSMTPPasswordStaysOutOfConfig(t *testing.T) {
 	keyring.MockInit()
 	password := strings.Repeat("p", 12)
 	status, err := SaveSMTPAccount("agency", ProviderConfig{
-		Host: "mail.example.com", TLS: "starttls", Username: "misbah@sunbeam.agency", From: "Misbah <misbah@sunbeam.agency>", ReplyTo: "replies@sunbeam.agency",
+		Host: "mail.example.com", TLS: "starttls", Username: "you@example.com", From: "Example Sender <you@example.com>", ReplyTo: "replies@example.com",
 	}, password)
 	if err != nil {
 		t.Fatal(err)
@@ -71,7 +71,7 @@ func TestSMTPPasswordStaysOutOfConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Provider != ProviderSMTP || cfg.Port != 587 || cfg.TLS != "starttls" || cfg.From != "misbah@sunbeam.agency" || cfg.ReplyTo != "replies@sunbeam.agency" {
+	if cfg.Provider != ProviderSMTP || cfg.Port != 587 || cfg.TLS != "starttls" || cfg.From != "you@example.com" || cfg.ReplyTo != "replies@example.com" {
 		t.Fatalf("stored config %+v", cfg)
 	}
 	if cfg.Provider == ProviderGmail {
@@ -98,11 +98,11 @@ func TestSMTPPasswordStaysOutOfConfig(t *testing.T) {
 	if !Authenticated("agency") {
 		t.Fatal("smtp account with a keychain password should be authenticated")
 	}
-	if Email("agency") != "misbah@sunbeam.agency" {
+	if Email("agency") != "you@example.com" {
 		t.Fatalf("email %q", Email("agency"))
 	}
 	status, err = SaveSMTPAccount("agency", ProviderConfig{
-		Host: "smtp.example.net", Port: 465, TLS: "ssl", Username: "misbah@sunbeam.agency", From: "misbah@sunbeam.agency",
+		Host: "smtp.example.net", Port: 465, TLS: "ssl", Username: "you@example.com", From: "you@example.com",
 	}, strings.Repeat("r", 12))
 	if err != nil || status != "updated" {
 		t.Fatalf("update status %s, %v", status, err)
@@ -129,12 +129,12 @@ func TestSetIMAPReusesPasswordAndLeavesLegacyFile(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("MAILSEND_CONFIG_DIR", dir)
 	keyring.MockInit()
-	original := []byte("{\n  \"default\": \"sunbeam\",\n  \"accounts\": [\"sunbeam\"],\n  \"emails\": {\n    \"sunbeam\": \"misbah@sunbeam.agency\"\n  }\n}")
+	original := []byte("{\n  \"default\": \"acme\",\n  \"accounts\": [\"acme\"],\n  \"emails\": {\n    \"acme\": \"you@example.com\"\n  }\n}")
 	path := filepath.Join(dir, "accounts.json")
 	if err := os.WriteFile(path, original, 0600); err != nil {
 		t.Fatal(err)
 	}
-	cfg, err := LookupProvider("sunbeam")
+	cfg, err := LookupProvider("acme")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -145,7 +145,7 @@ func TestSetIMAPReusesPasswordAndLeavesLegacyFile(t *testing.T) {
 	if err != nil || string(got) != string(original) {
 		t.Fatalf("reading IMAP settings rewrote accounts.json:\n%s", got)
 	}
-	if err = SetIMAP("sunbeam", ProviderConfig{IMAPHost: "mail.example.com"}); err == nil {
+	if err = SetIMAP("acme", ProviderConfig{IMAPHost: "mail.example.com"}); err == nil {
 		t.Fatal("expected set-imap to refuse a Gmail account")
 	}
 	password := fakePassword()
@@ -192,9 +192,9 @@ func TestSetIMAPReusesPasswordAndLeavesLegacyFile(t *testing.T) {
 	if !ok || endpoint.Port != 993 || endpoint.TLS != "ssl" {
 		t.Fatalf("password rotation dropped IMAP: %+v", saved)
 	}
-	sunbeam, err := LookupProvider("sunbeam")
-	if err != nil || sunbeam.Provider != ProviderGmail || DefaultAccount() != "sunbeam" {
-		t.Fatalf("sunbeam %+v default %s err %v", sunbeam, DefaultAccount(), err)
+	acme, err := LookupProvider("acme")
+	if err != nil || acme.Provider != ProviderGmail || DefaultAccount() != "acme" {
+		t.Fatalf("acme %+v default %s err %v", acme, DefaultAccount(), err)
 	}
 }
 
@@ -202,21 +202,21 @@ func TestLegacyManifestSurvivesSMTPAccount(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("MAILSEND_CONFIG_DIR", dir)
 	keyring.MockInit()
-	original := []byte("{\n  \"default\": \"sunbeam\",\n  \"accounts\": [\"sunbeam\"],\n  \"emails\": {\n    \"sunbeam\": \"misbah@sunbeam.agency\"\n  }\n}")
+	original := []byte("{\n  \"default\": \"acme\",\n  \"accounts\": [\"acme\"],\n  \"emails\": {\n    \"acme\": \"you@example.com\"\n  }\n}")
 	if err := os.WriteFile(filepath.Join(dir, "accounts.json"), original, 0600); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := SaveSMTPAccount("agency", ProviderConfig{
-		Host: "mail.example.com", Port: 587, TLS: "starttls", Username: "misbah", From: "misbah@sunbeam.agency",
+		Host: "mail.example.com", Port: 587, TLS: "starttls", Username: "sender1", From: "you@example.com",
 	}, "pw"); err != nil {
 		t.Fatal(err)
 	}
-	sunbeam, err := LookupProvider("sunbeam")
+	acme, err := LookupProvider("acme")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if sunbeam.Provider != ProviderGmail || sunbeam.From != "misbah@sunbeam.agency" || DefaultAccount() != "sunbeam" {
-		t.Fatalf("sunbeam changed: %+v default %s", sunbeam, DefaultAccount())
+	if acme.Provider != ProviderGmail || acme.From != "you@example.com" || DefaultAccount() != "acme" {
+		t.Fatalf("acme changed: %+v default %s", acme, DefaultAccount())
 	}
 	agency, err := LookupProvider("agency")
 	if err != nil || agency.Provider != ProviderSMTP {

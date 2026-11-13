@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/IMisbahk/mailsend/internal/auth"
-	"github.com/IMisbahk/mailsend/internal/dispatch"
-	"github.com/IMisbahk/mailsend/internal/store"
+	"github.com/example-account/mailsend/internal/auth"
+	"github.com/example-account/mailsend/internal/dispatch"
+	"github.com/example-account/mailsend/internal/store"
 	"github.com/spf13/cobra"
 )
 
@@ -33,7 +33,7 @@ func queueAddCmd() *cobra.Command {
 		Use:   "add",
 		Short: "Add a batch from a JSON or CSV file",
 		Long:  "The file is a JSON object with an emails array, a JSON array of emails, or a CSV. A batch start time and interval space the messages. An email can set its own at time. Nothing is sent until mailsend dispatch runs.",
-		Example: `  mailsend queue add --file india.json --account sunbeam
+		Example: `  mailsend queue add --file india.json --account acme
   mailsend queue add --file wave.csv --start "2026-10-21 09:00" --interval 5m --timezone Asia/Kolkata`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if strings.TrimSpace(batchFile) == "" {
@@ -366,7 +366,7 @@ Before the provider is called the email is stored as sending. It becomes sent on
 Hold files that exist pause the dispatcher. A daily cap counts every sent row this installation has for the account, including mail sent outside the queue, and waits for the next midnight in --timezone.
 
 --lock-file holds an exclusive flock around each item's pre-send hook, send, and after-send hook, then releases it between items and while waiting. Another sender using that file waits its turn. --gap-from-history also spaces from the newest sent history row for the account.`,
-		Example: `  mailsend --account sunbeam dispatch --daily-cap 95 --timezone Asia/Kolkata --interval 5m \
+		Example: `  mailsend --account acme dispatch --daily-cap 95 --timezone Asia/Kolkata --interval 5m \
     --hold /var/lib/outbound/SEND_HOLD \
     --hold-step fu-d3,fu-d7,ooo,fu=/var/lib/outbound/FOLLOWUP_HOLD \
     --hook ./scripts/mailsend-presend-hook --after-send ./scripts/mailsend-presend-hook`,

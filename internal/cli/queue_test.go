@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/IMisbahk/mailsend/internal/smtpfake"
+	"github.com/example-account/mailsend/internal/smtpfake"
 )
 
 func TestQueueAddListCancelAndResolve(t *testing.T) {
@@ -19,7 +19,7 @@ func TestQueueAddListCancelAndResolve(t *testing.T) {
 	if err := os.WriteFile(file, body, 0600); err != nil {
 		t.Fatal(err)
 	}
-	stdout, stderr, err := executeCLI(t, "", "--account", "sunbeam", "queue", "add", "--file", file, "--json")
+	stdout, stderr, err := executeCLI(t, "", "--account", "acme", "queue", "add", "--file", file, "--json")
 	if err != nil {
 		t.Fatalf("add %v %s", err, stderr)
 	}
@@ -27,18 +27,18 @@ func TestQueueAddListCancelAndResolve(t *testing.T) {
 	if err = json.Unmarshal([]byte(stdout), &added); err != nil {
 		t.Fatal(err)
 	}
-	if added["status"] != "queued" || added["count"] != float64(2) || added["account"] != "sunbeam" {
+	if added["status"] != "queued" || added["count"] != float64(2) || added["account"] != "acme" {
 		t.Fatalf("added %#v", added)
 	}
 	batchID, _ := added["batch_id"].(string)
-	stdout, stderr, err = executeCLI(t, "", "--account", "sunbeam", "queue", "list", "--json")
+	stdout, stderr, err = executeCLI(t, "", "--account", "acme", "queue", "list", "--json")
 	if err != nil {
 		t.Fatalf("list %v %s", err, stderr)
 	}
 	if !strings.Contains(stdout, batchID) || !strings.Contains(stdout, `"pending": 2`) {
 		t.Fatalf("list %s", stdout)
 	}
-	stdout, stderr, err = executeCLI(t, "", "--account", "sunbeam", "queue", "status", batchID, "--json")
+	stdout, stderr, err = executeCLI(t, "", "--account", "acme", "queue", "status", batchID, "--json")
 	if err != nil {
 		t.Fatalf("status %v %s", err, stderr)
 	}
@@ -59,14 +59,14 @@ func TestQueueAddListCancelAndResolve(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected a bad item id to fail")
 	}
-	stdout, stderr, err = executeCLI(t, "", "--account", "sunbeam", "queue", "resolve", strconv.FormatInt(status.Items[1].ID, 10), "--drop", "--reason", "not this one", "--json")
+	stdout, stderr, err = executeCLI(t, "", "--account", "acme", "queue", "resolve", strconv.FormatInt(status.Items[1].ID, 10), "--drop", "--reason", "not this one", "--json")
 	if err != nil {
 		t.Fatalf("resolve %v %s %s", err, stdout, stderr)
 	}
 	if !strings.Contains(stdout, `"status": "cancelled"`) {
 		t.Fatalf("resolve %s", stdout)
 	}
-	stdout, stderr, err = executeCLI(t, "", "--account", "sunbeam", "queue", "cancel", batchID, "--json")
+	stdout, stderr, err = executeCLI(t, "", "--account", "acme", "queue", "cancel", batchID, "--json")
 	if err != nil {
 		t.Fatalf("cancel %v %s", err, stderr)
 	}
@@ -77,7 +77,7 @@ func TestQueueAddListCancelAndResolve(t *testing.T) {
 
 func TestDispatchOnceUsesHookAndRecordsHistory(t *testing.T) {
 	useTestConfig(t)
-	server, err := smtpfake.Listen(smtpfake.Options{Username: "misbah@sunbeam.agency", Password: "secret"})
+	server, err := smtpfake.Listen(smtpfake.Options{Username: "you@example.com", Password: "secret"})
 	if err != nil {
 		t.Fatal(err)
 	}

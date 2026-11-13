@@ -77,13 +77,13 @@ While an external OAuth project is in **Testing**, Google expires refresh tokens
 For multiple named Gmail accounts:
 
 ```sh
-mailsend login --account sunbeam
+mailsend login --account acme
 mailsend login --account personal
 mailsend account --account personal
-mailsend send --account sunbeam --to alex@example.com --subject "Hello" --body "Hi"
+mailsend send --account acme --to alex@example.com --subject "Hello" --body "Hi"
 ```
 
-Accounts saved before SMTP support have no `provider` field. Those accounts, including an existing `sunbeam` entry, remain Gmail accounts. Adding SMTP does not rewrite them.
+Accounts saved before SMTP support have no `provider` field. Those accounts, including an existing `acme` entry, remain Gmail accounts. Adding SMTP does not rewrite them.
 
 ## SMTP accounts
 
@@ -91,47 +91,47 @@ Each account is either `gmail` or `smtp`. The host is always the one you pass to
 
 The password is never a command flag and is never written to `accounts.json`. It is stored in the same OS keychain service as Gmail tokens, under a separate item. Supply it in one of three ways, in this order: `--password-stdin`, the `MAILSEND_SMTP_PASSWORD` environment variable, or an interactive prompt when stdin is a terminal.
 
-Use a new account name so you do not replace a Gmail account. This example uses `sunbeam-smtp` and the From address `misbah@sunbeam.agency`. Replace `mail.example.com` with your server:
+Use a new account name so you do not replace a Gmail account. This example uses `acme-smtp` and the From address `you@example.com`. Replace `mail.example.com` with your server:
 
 ```sh
-mailsend account add sunbeam-smtp \
+mailsend account add acme-smtp \
   --provider smtp \
   --host mail.example.com \
   --port 587 \
   --tls starttls \
-  --username misbah@sunbeam.agency \
-  --from misbah@sunbeam.agency
+  --username you@example.com \
+  --from you@example.com
 ```
 
 The same account from stdin, or from the environment:
 
 ```sh
-printf '%s\n' "$SMTP_PASSWORD" | mailsend account add sunbeam-smtp \
+printf '%s\n' "$SMTP_PASSWORD" | mailsend account add acme-smtp \
   --provider smtp \
   --host mail.example.com \
   --port 587 \
   --tls starttls \
-  --username misbah@sunbeam.agency \
-  --from misbah@sunbeam.agency \
-  --reply-to replies@sunbeam.agency \
+  --username you@example.com \
+  --from you@example.com \
+  --reply-to replies@example.com \
   --password-stdin
 
-MAILSEND_SMTP_PASSWORD="$SMTP_PASSWORD" mailsend account add sunbeam-smtp \
+MAILSEND_SMTP_PASSWORD="$SMTP_PASSWORD" mailsend account add acme-smtp \
   --provider smtp \
   --host mail.example.com \
   --port 587 \
   --tls starttls \
-  --username misbah@sunbeam.agency \
-  --from misbah@sunbeam.agency
+  --username you@example.com \
+  --from you@example.com
 ```
 
-`--password-stdin` wins over the environment variable. Running `account add` again for the same SMTP name updates the server settings and replaces the keychain password. A Gmail name such as `sunbeam` is refused; log that account out first or pick another name. The first account stays the default. A later SMTP account does not replace an existing default.
+`--password-stdin` wins over the environment variable. Running `account add` again for the same SMTP name updates the server settings and replaces the keychain password. A Gmail name such as `acme` is refused; log that account out first or pick another name. The first account stays the default. A later SMTP account does not replace an existing default.
 
 Check the connection without sending a message. This opens the configured host, negotiates the selected TLS mode, and authenticates:
 
 ```sh
-mailsend account test sunbeam-smtp
-mailsend account --account sunbeam-smtp
+mailsend account test acme-smtp
+mailsend account --account acme-smtp
 ```
 
 ### Reading mail over IMAP
@@ -139,17 +139,17 @@ mailsend account --account sunbeam-smtp
 SMTP accounts can also read mail. IMAP uses the SMTP password already in the keychain. Enable it on an existing account without typing that password again:
 
 ```sh
-mailsend account set-imap gobitsnbytes
+mailsend account set-imap example-account
 ```
 
-With no flags, the IMAP host is the SMTP host, the port is 993, the TLS mode is `ssl` (implicit TLS), and the username is the SMTP username. That matches a host such as `mail.gobitsnbytes.org` which submits on SMTP port 587 with STARTTLS and serves IMAP on port 993. Override any of those when the mailbox server differs:
+With no flags, the IMAP host is the SMTP host, the port is 993, the TLS mode is `ssl` (implicit TLS), and the username is the SMTP username. That matches a host such as `mail.example.com` which submits on SMTP port 587 with STARTTLS and serves IMAP on port 993. Override any of those when the mailbox server differs:
 
 ```sh
-mailsend account set-imap gobitsnbytes \
-  --imap-host mail.gobitsnbytes.org \
+mailsend account set-imap example-account \
+  --imap-host mail.example.com \
   --imap-port 993 \
   --imap-tls ssl \
-  --imap-username ada@gobitsnbytes.org
+  --imap-username ada@example.com
 ```
 
 `account add` accepts the same `--imap-host`, `--imap-port`, `--imap-tls`, and `--imap-username` flags, so a new account can enable IMAP in the same step. Running `account add` again without those flags keeps the IMAP settings already stored. Accounts saved before IMAP support have no `imapHost` field and keep loading as they did. `set-imap` writes only the mailbox host, port, TLS mode, and username into `accounts.json`.
@@ -157,10 +157,10 @@ mailsend account set-imap gobitsnbytes \
 `account test` logs in over IMAP and logs out without opening a mailbox when IMAP is configured. SMTP and IMAP are reported separately. `--send-to` sends the test message only after both succeed. `--imap-tls none` is cleartext and is called out the same way as SMTP `--tls none`. `MAILSEND_SMTP_CA_FILE` is the PEM trust file for both SMTP and IMAP.
 
 ```sh
-mailsend inbox --account gobitsnbytes
-mailsend inbox --account gobitsnbytes --folder INBOX --limit 20 --unread --since 7d --from ada@example.com --json
-mailsend read 42 --account gobitsnbytes
-mailsend read 42 --account gobitsnbytes --folder INBOX --mark-read --json
+mailsend inbox --account example-account
+mailsend inbox --account example-account --folder INBOX --limit 20 --unread --since 7d --from ada@example.com --json
+mailsend read 42 --account example-account
+mailsend read 42 --account example-account --folder INBOX --mark-read --json
 ```
 
 `inbox` lists newest first: UID, date, from, subject, a short snippet, and whether the message is seen. The mailbox is opened read-only with EXAMINE, and text is fetched with BODY.PEEK, so listing leaves the seen flag alone. `--since` defaults to `7d`. `0s` lists without a time limit. `--limit` accepts 1 through 1000.
@@ -170,23 +170,23 @@ mailsend read 42 --account gobitsnbytes --folder INBOX --mark-read --json
 `sent-check` on an SMTP account with IMAP searches the Sent mailbox. It uses the SPECIAL-USE `\Sent` folder when the server advertises one, and otherwise the first existing name among `Sent`, `Sent Items`, `Sent Messages`, and `INBOX.Sent`. The flags, exit codes, and JSON object match the Gmail command: exit 0 means none, exit 3 means at least one match, exit 2 means the search failed. Each IMAP hit uses the UID as `id`. An SMTP account without IMAP exits 2 and tells you to run `account set-imap`. Gmail `sent-check` is unchanged, and `dispatch` still reconciles crashed sends against Gmail Sent.
 
 ```sh
-mailsend sent-check --account gobitsnbytes --to ada@example.com --since 30d --json
+mailsend sent-check --account example-account --to ada@example.com --since 30d --json
 ```
 
 `--send-to` authenticates and then sends one test message, which is recorded in history with kind `test`:
 
 ```sh
-mailsend account test sunbeam-smtp --send-to alex@example.com
+mailsend account test acme-smtp --send-to alex@example.com
 ```
 
 `send`, `bulk`, `history`, `--dry-run`, `--from-name`, `--json`, and the local delay / `--daily-limit` controls use the same commands for both providers:
 
 ```sh
-mailsend send --account sunbeam-smtp \
+mailsend send --account acme-smtp \
   --to alex@example.com \
   --subject "Hello" \
   --body "Hi from SMTP" \
-  --from-name "Misbah"
+  --from-name "Example Sender"
 ```
 
 `--tls none` is cleartext and is reported by `account test`. TLS 1.2 or newer is required for `starttls` and `ssl`, and the certificate must match the configured host. Point `MAILSEND_SMTP_CA_FILE` at a PEM file when the server uses a private CA. There is no option to skip certificate verification.
@@ -255,7 +255,7 @@ Hi {{name}},
 I was looking at {{company}} and wanted to reach out.
 
 Best,
-Misbah
+Example Sender
 ```
 
 ```sh
@@ -335,8 +335,8 @@ The schedule is local time; RFC3339 timestamps with an explicit zone are also ac
 The gap is per account, not per batch. One lock file stops a second `dispatch` process for that account from sending at all. If a scheduled time is already in the past, that email goes out as soon as the gap allows, and every later email keeps the same spacing from that point. Past-due mail is not skipped and it is not sent in a burst.
 
 ```sh
-mailsend --account sunbeam queue add --file india.json
-mailsend --account sunbeam dispatch \
+mailsend --account acme queue add --file india.json
+mailsend --account acme dispatch \
   --interval 5m \
   --daily-cap 95 \
   --timezone Asia/Kolkata \
@@ -351,13 +351,13 @@ mailsend --account sunbeam dispatch \
 `--gap-from-history` makes that same gap start from the newest `sent` row in history for the account, including ordinary `send` and `bulk` messages, when that row is later than the queue's own cursor. Without the flag, only the queue cursor counts.
 
 ```sh
-mailsend --account sunbeam dispatch --interval 5m --gap-from-history
+mailsend --account acme dispatch --interval 5m --gap-from-history
 ```
 
 `--lock-file` takes an exclusive `flock` on that path around each email's pre-send hook, the send, and the after-send hook. The lock is released between emails and while the dispatcher is waiting, so another sender that locks the same file can run in those gaps. The dispatcher waits for the lock. It does not skip the email.
 
 ```sh
-mailsend --account sunbeam dispatch --interval 5m --lock-file /var/lib/outbound/send.lock
+mailsend --account acme dispatch --interval 5m --lock-file /var/lib/outbound/send.lock
 ```
 
 A hold file that exists pauses the dispatcher. The emails stay queued. `--hold` pauses everything. `--hold-step fu-d3,fu-d7,ooo,fu=/path/FOLLOWUP_HOLD` pauses only emails whose `step` is one of those names, which is how a follow-up hold can leave first emails moving. Removing the file lets the dispatcher continue.
@@ -373,8 +373,8 @@ After `mailsend login` grants `gmail.readonly`, a crashed `sending` row is recon
 `dispatch --require-sent-check` is a separate gate that runs before each send. It asks Gmail Sent whether this recipient already has a message within `--sent-within` (default 7 days). A match blocks that email and the batch continues. A search error, including a missing scope, stops the dispatcher and leaves the email pending, so nothing is sent on an unknown answer. Without the flag, an old send-only token keeps sending.
 
 ```sh
-mailsend sent-check --account sunbeam --to ada@example.com --since 30d --json
-mailsend --account sunbeam dispatch --require-sent-check --sent-within 7d --interval 5m
+mailsend sent-check --account acme --to ada@example.com --since 30d --json
+mailsend --account acme dispatch --require-sent-check --sent-within 7d --interval 5m
 ```
 
 `sent-check` prints matching messages (`id`, `date`, `to`, `subject`). Exit 0 means none. Exit 3 means at least one. Exit 2 means the search failed or the scope is missing. `--since` defaults to 30 days. `--subject` is optional. The pre-send gate matches on recipient and time only. On an SMTP account the same command searches IMAP Sent and prints the UID in `id`. `dispatch --require-sent-check` still uses Gmail Sent for that gate.
@@ -419,7 +419,7 @@ ada@example.com,Hello {{name}},Hi {{name}},first,in-1,Ada
 ```
 
 ```sh
-mailsend queue add --file wave.csv --start "2026-10-21 09:00" --interval 5m --timezone Asia/Kolkata --account sunbeam
+mailsend queue add --file wave.csv --start "2026-10-21 09:00" --interval 5m --timezone Asia/Kolkata --account acme
 ```
 
 ### Pre-send hook
@@ -427,7 +427,7 @@ mailsend queue add --file wave.csv --start "2026-10-21 09:00" --interval 5m --ti
 `--hook` runs before each send. The batch's own `hook` wins when it is set. The command receives one JSON object on stdin:
 
 ```json
-{"account":"sunbeam","batch_id":"...","label":"India","email":"ada@example.com","subject":"Hello","step":"first","tag":"in-1","scheduled_at":"...","position":0}
+{"account":"acme","batch_id":"...","label":"India","email":"ada@example.com","subject":"Hello","step":"first","tag":"in-1","scheduled_at":"...","position":0}
 ```
 
 Exit 0 allows the send. Any other exit blocks that email, stores the stderr (or stdout) as the reason, and the batch continues. The gap is not used for a blocked email. `--after-send` runs the same protocol after the provider id is stored, with `message_id` and `"status":"sent"` added. A failure there does not unsend the message.
@@ -448,7 +448,7 @@ A shell loop does the same job with `--once`, which sends at most one due email 
 
 ```sh
 while true; do
-  mailsend --account sunbeam dispatch --once --interval 5m --daily-cap 95 --timezone Asia/Kolkata \
+  mailsend --account acme dispatch --once --interval 5m --daily-cap 95 --timezone Asia/Kolkata \
     --hold "$OUTBOUND/SEND_HOLD" \
     --hold-step "fu-d3,fu-d7,ooo,fu=$OUTBOUND/FOLLOWUP_HOLD" \
     --hook ./scripts/mailsend-presend-hook \

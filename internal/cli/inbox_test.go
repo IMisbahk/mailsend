@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/IMisbahk/mailsend/internal/auth"
-	"github.com/IMisbahk/mailsend/internal/imapfake"
-	"github.com/IMisbahk/mailsend/internal/smtpfake"
+	"github.com/example-account/mailsend/internal/auth"
+	"github.com/example-account/mailsend/internal/imapfake"
+	"github.com/example-account/mailsend/internal/smtpfake"
 	"github.com/emersion/go-imap/v2"
 )
 
@@ -47,19 +47,19 @@ func TestVersionAndIMAPHelp(t *testing.T) {
 
 func TestSetIMAPKeepsPasswordAndLegacyAccount(t *testing.T) {
 	dir := useTestConfig(t)
-	original := []byte("{\n  \"default\": \"sunbeam\",\n  \"accounts\": [\"sunbeam\"],\n  \"emails\": {\n    \"sunbeam\": \"misbah@sunbeam.agency\"\n  }\n}\n")
+	original := []byte("{\n  \"default\": \"acme\",\n  \"accounts\": [\"acme\"],\n  \"emails\": {\n    \"acme\": \"you@example.com\"\n  }\n}\n")
 	path := filepath.Join(dir, "accounts.json")
 	if err := os.WriteFile(path, original, 0600); err != nil {
 		t.Fatal(err)
 	}
-	if _, stderr, err := executeCLI(t, "", "inbox", "--account", "sunbeam"); err == nil || !strings.Contains(err.Error(), "not an SMTP account") {
+	if _, stderr, err := executeCLI(t, "", "inbox", "--account", "acme"); err == nil || !strings.Contains(err.Error(), "not an SMTP account") {
 		t.Fatalf("inbox on gmail %v\n%s", err, stderr)
 	}
 	got, err := os.ReadFile(path)
 	if err != nil || string(got) != string(original) {
 		t.Fatalf("legacy accounts.json changed:\n%s", got)
 	}
-	if _, _, err = executeCLI(t, "", "account", "set-imap", "sunbeam"); err == nil || !strings.Contains(err.Error(), "not an SMTP account") {
+	if _, _, err = executeCLI(t, "", "account", "set-imap", "acme"); err == nil || !strings.Contains(err.Error(), "not an SMTP account") {
 		t.Fatalf("set-imap on gmail %v", err)
 	}
 	got, err = os.ReadFile(path)
@@ -105,11 +105,11 @@ func TestSetIMAPKeepsPasswordAndLegacyAccount(t *testing.T) {
 	if err != nil || strings.Contains(string(body), password) {
 		t.Fatalf("config %s", body)
 	}
-	sunbeam, err := auth.LookupProvider("sunbeam")
-	if err != nil || sunbeam.Provider != auth.ProviderGmail {
-		t.Fatalf("sunbeam %+v %v", sunbeam, err)
+	acme, err := auth.LookupProvider("acme")
+	if err != nil || acme.Provider != auth.ProviderGmail {
+		t.Fatalf("acme %+v %v", acme, err)
 	}
-	if auth.DefaultAccount() != "sunbeam" {
+	if auth.DefaultAccount() != "acme" {
 		t.Fatalf("default became %s", auth.DefaultAccount())
 	}
 

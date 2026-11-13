@@ -15,7 +15,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/IMisbahk/mailsend/internal/smtp"
+	"github.com/example-account/mailsend/internal/smtp"
 	"github.com/emersion/go-imap/v2"
 	"github.com/emersion/go-imap/v2/imapclient"
 )
