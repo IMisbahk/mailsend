@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/example-account/mailsend/internal/auth"
+	"github.com/IMisbahk/mailsend/internal/auth"
 )
 
 type hangTransport struct{}

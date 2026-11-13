@@ -11,9 +11,9 @@ import (
 	"strings"
 	"time"
 
-	mailmsg "github.com/example-account/mailsend/internal/mail"
-	"github.com/example-account/mailsend/internal/store"
-	templatetool "github.com/example-account/mailsend/internal/template"
+	mailmsg "github.com/IMisbahk/mailsend/internal/mail"
+	"github.com/IMisbahk/mailsend/internal/store"
+	templatetool "github.com/IMisbahk/mailsend/internal/template"
 
 	_ "time/tzdata"
 )

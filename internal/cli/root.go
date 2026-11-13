@@ -15,10 +15,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/example-account/mailsend/internal/auth"
-	mailmsg "github.com/example-account/mailsend/internal/mail"
-	"github.com/example-account/mailsend/internal/store"
-	templatetool "github.com/example-account/mailsend/internal/template"
+	"github.com/IMisbahk/mailsend/internal/auth"
+	mailmsg "github.com/IMisbahk/mailsend/internal/mail"
+	"github.com/IMisbahk/mailsend/internal/store"
+	templatetool "github.com/IMisbahk/mailsend/internal/template"
 	"github.com/gofrs/flock"
 	"github.com/spf13/cobra"
 )

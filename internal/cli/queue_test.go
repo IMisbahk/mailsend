@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/example-account/mailsend/internal/smtpfake"
+	"github.com/IMisbahk/mailsend/internal/smtpfake"
 )
 
 func TestQueueAddListCancelAndResolve(t *testing.T) {

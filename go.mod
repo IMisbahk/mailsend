@@ -1,4 +1,4 @@
-module github.com/example-account/mailsend
+module github.com/IMisbahk/mailsend
 
 go 1.23
 

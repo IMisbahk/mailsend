@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	mailmsg "github.com/example-account/mailsend/internal/mail"
-	"github.com/example-account/mailsend/internal/smtpfake"
+	mailmsg "github.com/IMisbahk/mailsend/internal/mail"
+	"github.com/IMisbahk/mailsend/internal/smtpfake"
 )
 
 func testClient(t *testing.T, server *smtpfake.Server, mode, password string) *Client {

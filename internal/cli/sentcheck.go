@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/example-account/mailsend/internal/auth"
+	"github.com/IMisbahk/mailsend/internal/auth"
 	"github.com/spf13/cobra"
 )
 

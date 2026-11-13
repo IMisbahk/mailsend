@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/example-account/mailsend/internal/auth"
-	"github.com/example-account/mailsend/internal/imapfake"
-	"github.com/example-account/mailsend/internal/smtpfake"
+	"github.com/IMisbahk/mailsend/internal/auth"
+	"github.com/IMisbahk/mailsend/internal/imapfake"
+	"github.com/IMisbahk/mailsend/internal/smtpfake"
 	"github.com/emersion/go-imap/v2"
 )
 

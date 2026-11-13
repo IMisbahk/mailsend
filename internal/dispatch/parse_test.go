@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/example-account/mailsend/internal/store"
+	"github.com/IMisbahk/mailsend/internal/store"
 )
 
 func TestParseJSONSpacesEmailsAndKeepsExplicitTime(t *testing.T) {

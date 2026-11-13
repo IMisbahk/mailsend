@@ -6,7 +6,7 @@ import (
 	"net/mail"
 	"strings"
 
-	"github.com/example-account/mailsend/internal/smtp"
+	"github.com/IMisbahk/mailsend/internal/smtp"
 	"github.com/zalando/go-keyring"
 )
 

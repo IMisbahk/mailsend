@@ -6,9 +6,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/example-account/mailsend/internal/auth"
-	mailmsg "github.com/example-account/mailsend/internal/mail"
-	"github.com/example-account/mailsend/internal/smtp"
+	"github.com/IMisbahk/mailsend/internal/auth"
+	mailmsg "github.com/IMisbahk/mailsend/internal/mail"
+	"github.com/IMisbahk/mailsend/internal/smtp"
 	"github.com/spf13/cobra"
 )
 
